@@ -73,6 +73,12 @@ impl HeaderEmitter {
         }
         false
     }
+
+    /// Mark the header as already emitted for the current stream only.
+    /// Does not affect the per-turn emission flag.
+    pub(crate) fn suppress_for_stream(&mut self) {
+        self.emitted_in_stream = true;
+    }
 }
 
 fn render_header_line() -> ratatui::text::Line<'static> {

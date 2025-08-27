@@ -171,22 +171,28 @@ impl ChatWidget {
     }
 
     fn on_agent_reasoning_delta(&mut self, delta: String) {
-        // For reasoning deltas, do not stream to history. Accumulate the
-        // current reasoning block and extract the first bold element
-        // (between **/**) as the chunk header. Show this header as status.
-        self.reasoning_buffer.push_str(&delta);
+        // Stream reasoning deltas into the normal view so they appear live,
+        // while still accumulating for transcript recording and status header.
+        // Suppress the standard header for reasoning streams.
+        let sink = AppEventHistorySink(self.app_event_tx.clone());
+        self.stream.begin(&sink);
+        self.stream.suppress_header_for_current_stream();
+        self.stream.push_and_maybe_commit(&delta, &sink);
 
+        // Maintain the buffer used for header extraction and transcript.
+        self.reasoning_buffer.push_str(&delta);
         if let Some(header) = extract_first_bold(&self.reasoning_buffer) {
-            // Update the shimmer header to the extracted reasoning chunk header.
             self.bottom_pane.update_status_header(header);
-        } else {
-            // Fallback while we don't yet have a bold header: leave existing header as-is.
         }
         self.request_redraw();
     }
 
     fn on_agent_reasoning_final(&mut self) {
-        // At the end of a reasoning block, record transcript-only content.
+        // Flush any streamed reasoning content and mark the end of the block
+        // so subsequent agent messages can start a fresh stream.
+        self.flush_answer_stream_with_separator();
+
+        // Record the full reasoning content for the transcript view only.
         self.full_reasoning_buffer.push_str(&self.reasoning_buffer);
         if !self.full_reasoning_buffer.is_empty() {
             self.add_to_history(history_cell::new_reasoning_block(

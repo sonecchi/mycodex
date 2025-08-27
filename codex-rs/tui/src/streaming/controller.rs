@@ -80,6 +80,16 @@ impl StreamController {
         self.active = true;
     }
 
+    /// Suppress header emission for the current stream (e.g., reasoning streams).
+    /// This marks the per-stream header as already emitted without affecting
+    /// the per-turn state, so a subsequent answer in the same turn can still
+    /// render its header.
+    pub(crate) fn suppress_header_for_current_stream(&mut self) {
+        // We intentionally do not toggle `emitted_this_turn` here.
+        // Only the current stream should be affected.
+        self.header.suppress_for_stream();
+    }
+
     /// Push a delta; if it contains a newline, commit completed lines and start animation.
     pub(crate) fn push_and_maybe_commit(&mut self, delta: &str, sink: &impl HistorySink) {
         if !self.active {

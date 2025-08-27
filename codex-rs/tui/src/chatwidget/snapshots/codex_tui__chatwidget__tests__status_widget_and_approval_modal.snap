@@ -1,13 +1,11 @@
 ---
 source: tui/src/chatwidget/tests.rs
-assertion_line: 851
+assertion_line: 890
 expression: terminal.backend()
 ---
-"? Codex wants to run echo 'hello world'                                         "
 "                                                                                "
-"Codex wants to run a command                                                    "
+" Analyzing (0s • Esc to interrupt)                                              "
 "                                                                                "
-"▌Allow command?                                                                 "
-"▌ Yes   Always   No, provide feedback                                           "
-"▌ Approve and run the command                                                   "
+"▌ Ask Codex to do anything                                                      "
+" ⏎ send   Ctrl+J newline   Ctrl+T transcript   Ctrl+C quit                      "
 "                                                                                "

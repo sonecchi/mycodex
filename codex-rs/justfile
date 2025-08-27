@@ -2,13 +2,13 @@ set positional-arguments
 
 # Keep CoT patch applied across merges
 cot-status:
-    bash -lc 'scripts/cot-patch.sh status'
+    bash -lc '"$(git rev-parse --show-toplevel)/scripts/cot-patch.sh" status'
 
 cot-on:
-    bash -lc 'scripts/cot-patch.sh on'
+    bash -lc '"$(git rev-parse --show-toplevel)/scripts/cot-patch.sh" on'
 
 cot-off:
-    bash -lc 'scripts/cot-patch.sh off'
+    bash -lc '"$(git rev-parse --show-toplevel)/scripts/cot-patch.sh" off'
 
 # Display help
 help:

@@ -1,0 +1,235 @@
+diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
+index bfc9104c..9184f6f7 100644
+--- a/codex-rs/tui/src/chatwidget.rs
++++ b/codex-rs/tui/src/chatwidget.rs
+@@ -171,22 +171,28 @@ impl ChatWidget {
+     }
+ 
+     fn on_agent_reasoning_delta(&mut self, delta: String) {
+-        // For reasoning deltas, do not stream to history. Accumulate the
+-        // current reasoning block and extract the first bold element
+-        // (between **/**) as the chunk header. Show this header as status.
+-        self.reasoning_buffer.push_str(&delta);
++        // Stream reasoning deltas into the normal view so they appear live,
++        // while still accumulating for transcript recording and status header.
++        // Suppress the standard header for reasoning streams.
++        let sink = AppEventHistorySink(self.app_event_tx.clone());
++        self.stream.begin(&sink);
++        self.stream.suppress_header_for_current_stream();
++        self.stream.push_and_maybe_commit(&delta, &sink);
+ 
++        // Maintain the buffer used for header extraction and transcript.
++        self.reasoning_buffer.push_str(&delta);
+         if let Some(header) = extract_first_bold(&self.reasoning_buffer) {
+-            // Update the shimmer header to the extracted reasoning chunk header.
+             self.bottom_pane.update_status_header(header);
+-        } else {
+-            // Fallback while we don't yet have a bold header: leave existing header as-is.
+         }
+         self.request_redraw();
+     }
+ 
+     fn on_agent_reasoning_final(&mut self) {
+-        // At the end of a reasoning block, record transcript-only content.
++        // Flush any streamed reasoning content and mark the end of the block
++        // so subsequent agent messages can start a fresh stream.
++        self.flush_answer_stream_with_separator();
++
++        // Record the full reasoning content for the transcript view only.
+         self.full_reasoning_buffer.push_str(&self.reasoning_buffer);
+         if !self.full_reasoning_buffer.is_empty() {
+             self.add_to_history(history_cell::new_reasoning_block(
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__deltas_then_same_final_message_are_rendered_snapshot.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__deltas_then_same_final_message_are_rendered_snapshot.snap
+index 2bc5c75e..34df44d5 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__deltas_then_same_final_message_are_rendered_snapshot.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__deltas_then_same_final_message_are_rendered_snapshot.snap
+@@ -1,6 +1,9 @@
+ ---
+ source: tui/src/chatwidget/tests.rs
++assertion_line: 1495
+ expression: combined
+ ---
++I will first analyze the request.
++
+ codex
+ Here is the result.
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_widget_and_approval_modal.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_widget_and_approval_modal.snap
+index dc7619c6..f4536a47 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_widget_and_approval_modal.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_widget_and_approval_modal.snap
+@@ -1,13 +1,11 @@
+ ---
+ source: tui/src/chatwidget/tests.rs
+-assertion_line: 851
++assertion_line: 890
+ expression: terminal.backend()
+ ---
+-"? Codex wants to run echo 'hello world'                                         "
+ "                                                                                "
+-"Codex wants to run a command                                                    "
++" Analyzing (0s • Esc to interrupt)                                              "
+ "                                                                                "
+-"▌Allow command?                                                                 "
+-"▌ Yes   Always   No, provide feedback                                           "
+-"▌ Approve and run the command                                                   "
++"▌ Ask Codex to do anything                                                      "
++" ⏎ send   Ctrl+J newline   Ctrl+T transcript   Ctrl+C quit                      "
+ "                                                                                "
+diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
+index e4352478..217f116c 100644
+--- a/codex-rs/tui/src/lib.rs
++++ b/codex-rs/tui/src/lib.rs
+@@ -64,8 +64,6 @@ mod chatwidget_stream_tests;
+ 
+ #[cfg(not(debug_assertions))]
+ mod updates;
+-#[cfg(not(debug_assertions))]
+-use color_eyre::owo_colors::OwoColorize;
+ 
+ pub use cli::Cli;
+ 
+diff --git a/codex-rs/tui/src/streaming/controller.rs b/codex-rs/tui/src/streaming/controller.rs
+index b9afa893..726e3742 100644
+--- a/codex-rs/tui/src/streaming/controller.rs
++++ b/codex-rs/tui/src/streaming/controller.rs
+@@ -80,6 +80,16 @@ impl StreamController {
+         self.active = true;
+     }
+ 
++    /// Suppress header emission for the current stream (e.g., reasoning streams).
++    /// This marks the per-stream header as already emitted without affecting
++    /// the per-turn state, so a subsequent answer in the same turn can still
++    /// render its header.
++    pub(crate) fn suppress_header_for_current_stream(&mut self) {
++        // We intentionally do not toggle `emitted_this_turn` here.
++        // Only the current stream should be affected.
++        self.header.suppress_for_stream();
++    }
++
+     /// Push a delta; if it contains a newline, commit completed lines and start animation.
+     pub(crate) fn push_and_maybe_commit(&mut self, delta: &str, sink: &impl HistorySink) {
+         if !self.active {
+diff --git a/codex-rs/tui/src/streaming/mod.rs b/codex-rs/tui/src/streaming/mod.rs
+index eaaeeff4..ea47b35e 100644
+--- a/codex-rs/tui/src/streaming/mod.rs
++++ b/codex-rs/tui/src/streaming/mod.rs
+@@ -73,6 +73,12 @@ impl HeaderEmitter {
+         }
+         false
+     }
++
++    /// Mark the header as already emitted for the current stream only.
++    /// Does not affect the per-turn emission flag.
++    pub(crate) fn suppress_for_stream(&mut self) {
++        self.emitted_in_stream = true;
++    }
+ }
+ 
+ fn render_header_line() -> ratatui::text::Line<'static> {
+diff --git a/codex-rs/tui/tests/fixtures/ideal-binary-response.txt b/codex-rs/tui/tests/fixtures/ideal-binary-response.txt
+index 56ed4a46..228e717a 100644
+--- a/codex-rs/tui/tests/fixtures/ideal-binary-response.txt
++++ b/codex-rs/tui/tests/fixtures/ideal-binary-response.txt
+@@ -4,6 +4,14 @@ To get started, describe a task or try one of these commands:
+  /status - show current session configuration and token usage
+  /approvals - choose what Codex can do without approval
+  /model - choose what model and reasoning effort to use
++Investigating binary sizes
++
++I need to check the codex-rs repository to explain why the project's binaries
++are large. The user is likely seeking specifics about the setup: are Rust builds
++static, what features are enabled, and is debug information included? It could
++be due to static linking, included OpenSSL, or how panic handling is set up. I
++should look into the Cargo.toml file to confirm features and profiles without
++needing to edit any code. Let's get started on this!
+ 
+ codex
+ I’m going to scan the workspace and Cargo manifests to see build profiles and
+@@ -35,6 +43,15 @@ _
+     # ratatui = { path = "../../ratatui" }
+     ratatui = { git = "https://github.com/nornagon/ratatui", branch =
+ "nornagon-v0.29.0-patch" }
++Optimizing Rust Release Profile
++
++I'm reviewing the workspace's release profile, which has settings like lto=fat,
++strip=symbols, and codegen-units=1 to reduce binary size. However, it seems that
++"strip = symbols" only removes symbols, not debug information. In Rust 1.73+,
++both "symbols" and "debuginfo" stripping options are available. I should check
++whether using these results in a smaller binary. I’ll also skim through crates
++for heavy dependencies in Cargo.toml, including cli, core, exec, linux-sandbox,
++tui, login, ollama, and mcp.
+   ✓ for d in ansi-escape apply-patch arg0 cli common core exec execpolicy
+ file-search linux-sandbox login mcp-client mcp-server mcp-types ollama tui; do
+ echo "--- $d/Cargo.toml"; sed -n '1,200p' $d/Cargo.toml; echo; done
+@@ -169,6 +186,71 @@ echo "--- $d/Cargo.toml"; sed -n '1,200p' $d/Cargo.toml; echo; done
+ 
+     [dev-dependencies]
+     tempfile = "3"
++Considering binary size impacts
++
++I’m evaluating how binary size is influenced by various factors. There are many
++binaries, such as codex and codex-exec, which include dependencies by default,
++pulling in features like Tokio and hyper. For instance, reqwest includes
++default features like TLS through rustls. If default features remain enabled,
++it inflates the size with many additional components. I notice that for musl
++targets, using vendored builds of OpenSSL could significantly increase binary
++size. This is quite the intricate web of dependencies!Analyzing musl and binary
++size
++
++I’m considering the implications of building for musl with static linking.
++In this case, OpenSSL might come into play through some crates, but reqwest
++defaults to using rustls, although openssl-sys vendored could increase binary
++size. It’s interesting to think about whether they’re targeting musl, especially
++since it seems they might often be building for Mac and Linux with dynamic
++linking instead.
++
++I also realize there’s a difference between debug and release builds — release
++should be smaller due to optimizations, but if they’re defaulting to debug
++builds, that could lead to much larger binaries.Assessing crate impacts on size
++
++I need to be precise when analyzing binary sizes from various crates. Some
++crates, like ratatui-image, include heavy features such as libjpeg decoders,
++which can really bulk things up. Then there are the tree-sitter crates that
++contain large static grammar tables, adding significant size. The starlark crate
++and tracing-subscriber also contribute to size increases.
++
++With static linking per binary being standard in Rust, it leads to multiple
++copies of the same dependencies unless cdylibs are used. That makes the
++compile times longer, but using LTO helps reduce bloat somewhat through
++deduplication.Evaluating binary size factors
++
++Having multiple binaries indeed increases the overall size significantly.
++I'm considering options like upgrading to "opt-level = 'z'" or using
++"strip=debuginfo" for reducing size. It's interesting that while the profile
++only sets symbols for stripping, not debuginfo, this could inflate sizes if
++retained in release builds.
++
++The distinction between "symbols" and "debuginfo" is critical; "symbols"
++keeps debug information which may not align with the goal of minimizing size.
++I’d like to verify with the Rust documentation, but my network access is
++restricted.Explaining large binary sizes
++
++I’m analyzing why binaries in this project are so large. The primary reasons
++include monolithic static linking, where each binary includes the full
++dependency graph without shared libraries. Heavy dependencies such as reqwest,
++hyper, and TLS components also contribute significantly to size, along with
++image decoders and other libraries.
++
++Using MUSL targets means vendored OpenSSL can drastically increase the size due
++to static linking. Furthermore, if the release profile keeps debug information
++due to using "strip = symbols," that can lead to larger binaries as well. It’s a
++mix of several factors, including panic strategies and platform-specific linking
++behavior.Identifying binary size contributors
++
++I’m considering why binaries are still large even without static linking. The
++tracing-subscriber crate potentially adds weight because it includes regex,
++though it can sometimes use a lighter version. References from files like "core/
++Cargo.toml" show dependencies like reqwest and tokio, while the tui uses the
++image crate.
++
++To present this clearly, I’ll format the final answer with two main sections:
++"Main Causes" and "Build-Mode Notes." I can also include brief suggestions for
++reducing size, but I want to stay focused on answering the user's question.
+ 
+ codex
+ Here’s what’s driving size in this workspace’s binaries.

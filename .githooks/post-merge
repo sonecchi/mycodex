@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Auto-reapply CoT patch after merges to keep standard view showing reasoning.
+set -euo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+if [[ -x scripts/cot-patch.sh ]]; then
+  scripts/cot-patch.sh ensure || true
+fi
+

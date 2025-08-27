@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PATCH_FILE="changes.patch"
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+PATCH_FILE="$repo_root/changes.patch"
 
 has_patch() {
   [[ -f "$PATCH_FILE" ]]
@@ -9,11 +10,11 @@ has_patch() {
 
 is_applied() {
   # If reverse applies cleanly, patch is currently applied
-  git apply -R --check "$PATCH_FILE" >/dev/null 2>&1
+  git -C "$repo_root" apply -R --check "$PATCH_FILE" >/dev/null 2>&1
 }
 
 can_apply() {
-  git apply --check "$PATCH_FILE" >/dev/null 2>&1
+  git -C "$repo_root" apply --check "$PATCH_FILE" >/dev/null 2>&1
 }
 
 cmd=${1:-status}
@@ -37,7 +38,7 @@ case "$cmd" in
       exit 0
     fi
     if can_apply; then
-      git apply "$PATCH_FILE"
+      git -C "$repo_root" apply "$PATCH_FILE"
       echo "[cot] applied patch ✅"
     else
       echo "[cot] patch cannot be applied cleanly. Resolve conflicts then retry." >&2
@@ -46,7 +47,7 @@ case "$cmd" in
     ;;
   off)
     if is_applied; then
-      git apply -R "$PATCH_FILE"
+      git -C "$repo_root" apply -R "$PATCH_FILE"
       echo "[cot] reverted patch 🔄"
     else
       echo "[cot] already not applied ✅"
@@ -58,7 +59,7 @@ case "$cmd" in
       exit 0
     fi
     if can_apply; then
-      git apply "$PATCH_FILE"
+      git -C "$repo_root" apply "$PATCH_FILE"
       echo "[cot] applied patch after merge ✅"
     else
       echo "[cot] patch cannot be applied cleanly after merge. Please rebase/resolve." >&2
@@ -70,4 +71,3 @@ case "$cmd" in
     exit 64
     ;;
 esac
-

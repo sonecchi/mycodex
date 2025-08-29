@@ -78,6 +78,5 @@ cargo build -p codex-cli --release
 
 ## 関連ドキュメント
 
-- `docs/fork_upstream_sync.md`: フォークに本家（upstream）の更新を取り込む一般手順
 - `docs/cot-patch.md`: CoT パッチ（適用/解除/状態確認）
 

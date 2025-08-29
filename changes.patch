@@ -233,3 +233,136 @@ index 56ed4a46..228e717a 100644
  
  codex
  Here’s what’s driving size in this workspace’s binaries.
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
+index 49a34785..0d4aec29 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
+@@ -24,6 +24,7 @@ use ratatui::widgets::WidgetRef;
+ use super::chat_composer_history::ChatComposerHistory;
+ use super::command_popup::CommandItem;
+ use super::command_popup::CommandPopup;
++use super::custom_prompt_args::parse_slash_and_args;
+ use super::file_search_popup::FileSearchPopup;
+ use super::paste_burst::CharDecision;
+ use super::paste_burst::PasteBurst;
+@@ -432,24 +433,35 @@ impl ChatComposer {
+                 ..
+             } => {
+                 if let Some(sel) = popup.selected_item() {
+-                    // Clear textarea so no residual text remains.
+-                    self.textarea.set_text("");
+-                    // Capture any needed data from popup before clearing it.
+-                    let prompt_content = match sel {
+-                        CommandItem::UserPrompt(idx) => {
+-                            popup.prompt_content(idx).map(|s| s.to_string())
+-                        }
+-                        _ => None,
+-                    };
+-                    // Hide popup since an action has been dispatched.
+-                    self.active_popup = ActivePopup::None;
++                    // Capture first line BEFORE clearing so we can parse args.
++                    let first_line = self
++                        .textarea
++                        .text()
++                        .lines()
++                        .next()
++                        .unwrap_or("")
++                        .to_string();
+ 
+                     match sel {
+                         CommandItem::Builtin(cmd) => {
++                            // Clear input and close popup, then dispatch builtin.
++                            self.textarea.set_text("");
++                            self.active_popup = ActivePopup::None;
+                             return (InputResult::Command(cmd), true);
+                         }
+-                        CommandItem::UserPrompt(_) => {
+-                            if let Some(contents) = prompt_content {
++                        CommandItem::UserPrompt(idx) => {
++                            // Fetch prompt body from popup and expand with args from the composer line.
++                            let prompt_content = popup.prompt_content(idx).map(|s| s.to_string());
++                            let args = parse_slash_and_args(&first_line)
++                                .map(|(_, a)| a)
++                                .unwrap_or_default();
++                            let expanded = prompt_content.map(|c| c.replace("{{args}}", &args));
++
++                            // Clear input and close popup since an action has been dispatched.
++                            self.textarea.set_text("");
++                            self.active_popup = ActivePopup::None;
++
++                            if let Some(contents) = expanded {
+                                 return (InputResult::Submitted(contents), true);
+                             }
+                             return (InputResult::None, true);
+@@ -838,6 +850,15 @@ impl ChatComposer {
+                 self.pending_pastes.clear();
+ 
+                 text = text.trim().to_string();
++                // If the submission is a custom prompt invocation like "/name args",
++                // expand it by replacing {{args}} in the matched prompt's content.
++                if let Some(first_line) = text.lines().next()
++                    && first_line.starts_with('/')
++                        && let Some((name, args)) = parse_slash_and_args(first_line)
++                            && let Some(p) = self.custom_prompts.iter().find(|p| p.name == name) {
++                                let expanded = p.content.replace("{{args}}", &args);
++                                text = expanded;
++                            }
+                 if !text.is_empty() {
+                     self.history.record_local_submission(&text);
+                 }
+diff --git a/codex-rs/tui/src/bottom_pane/custom_prompt_args.rs b/codex-rs/tui/src/bottom_pane/custom_prompt_args.rs
+new file mode 100644
+index 00000000..29ad766e
+--- /dev/null
++++ b/codex-rs/tui/src/bottom_pane/custom_prompt_args.rs
+@@ -0,0 +1,38 @@
++use codex_protocol::custom_prompts::CustomPrompt;
++
++/// Parse a composer first line that may start with a slash command.
++/// Returns (name, args) where name is the token immediately after '/', and
++/// args is the remainder of the line after the first whitespace (leading
++/// whitespace trimmed). If the line doesn't start with '/', returns None.
++pub fn parse_slash_and_args(first_line: &str) -> Option<(String, String)> {
++    if !first_line.starts_with('/') {
++        return None;
++    }
++    // Remove leading '/'
++    let rest = &first_line[1..];
++    let rest = rest.trim_start();
++    if rest.is_empty() {
++        return None;
++    }
++    // Split at first whitespace boundary
++    let mut iter = rest.char_indices();
++    let split_idx = iter.find(|&(_, c)| c.is_whitespace()).map(|(i, _)| i);
++    match split_idx {
++        Some(idx) => {
++            let name = &rest[..idx];
++            let args = rest[idx..].trim_start();
++            Some((name.to_string(), args.to_string()))
++        }
++        None => Some((rest.to_string(), String::new())),
++    }
++}
++
++/// Expand the prompt named `name` by replacing all `{{args}}` occurrences with
++/// `args`. Returns None if no matching prompt is found.
++#[allow(dead_code)]
++pub fn expand_custom_prompt(prompts: &[CustomPrompt], name: &str, args: &str) -> Option<String> {
++    prompts
++        .iter()
++        .find(|p| p.name == name)
++        .map(|p| p.content.replace("{{args}}", args))
++}
+diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
+index b94db79f..a2de03f5 100644
+--- a/codex-rs/tui/src/bottom_pane/mod.rs
++++ b/codex-rs/tui/src/bottom_pane/mod.rs
+@@ -20,6 +20,7 @@ mod bottom_pane_view;
+ mod chat_composer;
+ mod chat_composer_history;
+ mod command_popup;
++mod custom_prompt_args;
+ mod file_search_popup;
+ mod list_selection_view;
+ mod paste_burst;

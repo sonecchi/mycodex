@@ -24,6 +24,7 @@ use ratatui::widgets::WidgetRef;
 use super::chat_composer_history::ChatComposerHistory;
 use super::command_popup::CommandItem;
 use super::command_popup::CommandPopup;
+use super::custom_prompt_args::parse_slash_and_args;
 use super::file_search_popup::FileSearchPopup;
 use super::paste_burst::CharDecision;
 use super::paste_burst::PasteBurst;
@@ -432,24 +433,35 @@ impl ChatComposer {
                 ..
             } => {
                 if let Some(sel) = popup.selected_item() {
-                    // Clear textarea so no residual text remains.
-                    self.textarea.set_text("");
-                    // Capture any needed data from popup before clearing it.
-                    let prompt_content = match sel {
-                        CommandItem::UserPrompt(idx) => {
-                            popup.prompt_content(idx).map(|s| s.to_string())
-                        }
-                        _ => None,
-                    };
-                    // Hide popup since an action has been dispatched.
-                    self.active_popup = ActivePopup::None;
+                    // Capture first line BEFORE clearing so we can parse args.
+                    let first_line = self
+                        .textarea
+                        .text()
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .to_string();
 
                     match sel {
                         CommandItem::Builtin(cmd) => {
+                            // Clear input and close popup, then dispatch builtin.
+                            self.textarea.set_text("");
+                            self.active_popup = ActivePopup::None;
                             return (InputResult::Command(cmd), true);
                         }
-                        CommandItem::UserPrompt(_) => {
-                            if let Some(contents) = prompt_content {
+                        CommandItem::UserPrompt(idx) => {
+                            // Fetch prompt body from popup and expand with args from the composer line.
+                            let prompt_content = popup.prompt_content(idx).map(|s| s.to_string());
+                            let args = parse_slash_and_args(&first_line)
+                                .map(|(_, a)| a)
+                                .unwrap_or_default();
+                            let expanded = prompt_content.map(|c| c.replace("{{args}}", &args));
+
+                            // Clear input and close popup since an action has been dispatched.
+                            self.textarea.set_text("");
+                            self.active_popup = ActivePopup::None;
+
+                            if let Some(contents) = expanded {
                                 return (InputResult::Submitted(contents), true);
                             }
                             return (InputResult::None, true);
@@ -838,6 +850,15 @@ impl ChatComposer {
                 self.pending_pastes.clear();
 
                 text = text.trim().to_string();
+                // If the submission is a custom prompt invocation like "/name args",
+                // expand it by replacing {{args}} in the matched prompt's content.
+                if let Some(first_line) = text.lines().next()
+                    && first_line.starts_with('/')
+                        && let Some((name, args)) = parse_slash_and_args(first_line)
+                            && let Some(p) = self.custom_prompts.iter().find(|p| p.name == name) {
+                                let expanded = p.content.replace("{{args}}", &args);
+                                text = expanded;
+                            }
                 if !text.is_empty() {
                     self.history.record_local_submission(&text);
                 }

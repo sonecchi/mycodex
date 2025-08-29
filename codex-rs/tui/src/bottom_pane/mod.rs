@@ -20,6 +20,7 @@ mod bottom_pane_view;
 mod chat_composer;
 mod chat_composer_history;
 mod command_popup;
+mod custom_prompt_args;
 mod file_search_popup;
 mod list_selection_view;
 mod paste_burst;

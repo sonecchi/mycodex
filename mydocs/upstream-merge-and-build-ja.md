@@ -1,3 +1,5 @@
+このプロジェクトは git@github.com:openai/codex.git をフォークし、そねっち好みのカスタマイズを加えたものである。
+
 # アップストリーム取り込みとビルド手順（日本語）
 
 このドキュメントは、フォーク（`origin`）に本家（`upstream`）の更新を取り込み、ローカルの CoT パッチ（thinking 可視化）を適用したうえでビルドするまでの手順をまとめたクイックガイドです。
@@ -79,4 +81,3 @@ cargo build -p codex-cli --release
 ## 関連ドキュメント
 
 - `docs/cot-patch.md`: CoT パッチ（適用/解除/状態確認）
-

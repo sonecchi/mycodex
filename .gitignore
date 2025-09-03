@@ -83,4 +83,8 @@ CHANGELOG.ignore.md
 .envrc
 
 .serena/
+/myscripts/
+GEMINI.md
+AGENTS.md
+CLAUDE.md
 

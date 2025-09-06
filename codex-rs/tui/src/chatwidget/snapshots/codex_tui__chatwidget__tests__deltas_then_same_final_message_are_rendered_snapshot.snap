@@ -1,9 +1,8 @@
 ---
 source: tui/src/chatwidget/tests.rs
-assertion_line: 1495
+assertion_line: 1629
 expression: combined
 ---
-I will first analyze the request.
+  I will first analyze the request.
 
-codex
-Here is the result.
+> Here is the result.

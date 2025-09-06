@@ -80,6 +80,7 @@ pub use client::ModelClient;
 pub use client_common::Prompt;
 pub use client_common::ResponseEvent;
 pub use client_common::ResponseStream;
+pub use client_common::base_instructions_source_human;
 pub use codex_protocol::models::ContentItem;
 pub use codex_protocol::models::LocalShellAction;
 pub use codex_protocol::models::LocalShellExecAction;

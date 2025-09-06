@@ -10,6 +10,14 @@ use codex_protocol::models::ResponseItem;
 use futures::Stream;
 use serde::Serialize;
 use std::borrow::Cow;
+use std::path::PathBuf;
+
+#[derive(Debug, Clone)]
+pub enum BaseInstructionsSource {
+    EnvVar(PathBuf),
+    Local(PathBuf),
+    Embedded,
+}
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
@@ -18,6 +26,51 @@ use tokio::sync::mpsc;
 /// The `instructions` field in the payload sent to a model should always start
 /// with this content.
 const BASE_INSTRUCTIONS: &str = include_str!("../prompt.md");
+
+/// Resolve the base instructions, preferring a developer-local override file
+/// if present. This allows keeping a personal prompt without involving Git.
+///
+/// Precedence:
+/// - If `CODEX_PROMPT_LOCAL` env var points to a readable file, use it.
+/// - Else if `<crate>/prompt.local.md` exists, use it.
+/// - Else fall back to the embedded `prompt.md`.
+pub fn detect_base_instructions_source() -> BaseInstructionsSource {
+    if let Ok(path) = std::env::var("CODEX_PROMPT_LOCAL") {
+        if !path.is_empty() {
+            let pb = PathBuf::from(&path);
+            if std::fs::read_to_string(&pb).is_ok() {
+                return BaseInstructionsSource::EnvVar(pb);
+            }
+        }
+    }
+    let mut local = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    local.push("prompt.local.md");
+    if std::fs::read_to_string(&local).is_ok() {
+        return BaseInstructionsSource::Local(local);
+    }
+    BaseInstructionsSource::Embedded
+}
+
+fn resolve_base_instructions() -> Cow<'static, str> {
+    match detect_base_instructions_source() {
+        BaseInstructionsSource::EnvVar(p) | BaseInstructionsSource::Local(p) => {
+            if let Ok(s) = std::fs::read_to_string(&p) {
+                Cow::Owned(s)
+            } else {
+                Cow::Borrowed(BASE_INSTRUCTIONS)
+            }
+        }
+        BaseInstructionsSource::Embedded => Cow::Borrowed(BASE_INSTRUCTIONS),
+    }
+}
+
+pub fn base_instructions_source_human() -> String {
+    match detect_base_instructions_source() {
+        BaseInstructionsSource::EnvVar(p) => format!("prompt: CODEX_PROMPT_LOCAL={}", p.display()),
+        BaseInstructionsSource::Local(p) => format!("prompt: {}", p.display()),
+        BaseInstructionsSource::Embedded => "prompt: codex-rs/core/prompt.md".to_string(),
+    }
+}
 
 /// API request payload for a single model turn
 #[derive(Default, Debug, Clone)]
@@ -35,10 +88,12 @@ pub struct Prompt {
 
 impl Prompt {
     pub(crate) fn get_full_instructions(&self, model: &ModelFamily) -> Cow<'_, str> {
-        let base = self
-            .base_instructions_override
-            .as_deref()
-            .unwrap_or(BASE_INSTRUCTIONS);
+        let base_cow = if let Some(override_str) = self.base_instructions_override.as_deref() {
+            Cow::Borrowed(override_str)
+        } else {
+            resolve_base_instructions()
+        };
+        let base: &str = &base_cow;
         let mut sections: Vec<&str> = vec![base];
 
         // When there are no custom instructions, add apply_patch_tool_instructions if either:

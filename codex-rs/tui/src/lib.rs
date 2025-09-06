@@ -300,6 +300,19 @@ async fn run_ratatui_app(
         tui.insert_history_lines(lines);
     }
 
+    // Always surface which prompt instructions are in effect (release builds only)
+    #[cfg(not(debug_assertions))]
+    {
+        use ratatui::style::Stylize as _;
+        use ratatui::text::Line;
+
+        let src = codex_core::base_instructions_source_human();
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from(vec!["Using ".dim(), src.cyan()]));
+        lines.push("".into());
+        tui.insert_history_lines(lines);
+    }
+
     // Initialize high-fidelity session event logging if enabled.
     session_log::maybe_init(&config);
 

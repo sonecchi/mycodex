@@ -11,6 +11,7 @@ upstream	git@github.com:openai/codex.git (push)
 ```
 
 # カスタマイズ内容
+mydocs/ のメモを参照.
 
 
 # システムプロンプト

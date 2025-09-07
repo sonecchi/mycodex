@@ -81,3 +81,14 @@ CHANGELOG.ignore.md
 # nix related
 .direnv
 .envrc
+
+# local develop
+/.serena/
+/myscripts/
+
+serena.html*
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+
+

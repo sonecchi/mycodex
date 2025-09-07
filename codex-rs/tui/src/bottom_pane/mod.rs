@@ -27,6 +27,7 @@ mod popup_consts;
 mod scroll_state;
 mod selection_popup_common;
 mod textarea;
+mod custom_prompt_args;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CancellationEvent {

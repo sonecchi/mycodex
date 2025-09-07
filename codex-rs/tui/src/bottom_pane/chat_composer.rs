@@ -26,6 +26,7 @@ use super::command_popup::CommandPopup;
 use super::file_search_popup::FileSearchPopup;
 use super::paste_burst::CharDecision;
 use super::paste_burst::PasteBurst;
+use super::custom_prompt_args::{expand_custom_prompt, parse_slash_and_args};
 use crate::bottom_pane::paste_burst::FlushResult;
 use crate::slash_command::SlashCommand;
 use codex_protocol::custom_prompts::CustomPrompt;
@@ -414,14 +415,17 @@ impl ChatComposer {
                 ..
             } => {
                 if let Some(sel) = popup.selected_item() {
+                    // Grab the first line BEFORE clearing to allow arg parsing.
+                    let first_line = self.textarea.text().lines().next().unwrap_or("").to_string();
                     // Clear textarea so no residual text remains.
                     self.textarea.set_text("");
                     // Capture any needed data from popup before clearing it.
-                    let prompt_content = match sel {
-                        CommandItem::UserPrompt(idx) => {
-                            popup.prompt_content(idx).map(|s| s.to_string())
-                        }
-                        _ => None,
+                    let (selected_prompt_name, prompt_content) = match sel {
+                        CommandItem::UserPrompt(idx) => (
+                            popup.prompt_name(idx).map(|s| s.to_string()),
+                            popup.prompt_content(idx).map(|s| s.to_string()),
+                        ),
+                        _ => (None, None),
                     };
                     // Hide popup since an action has been dispatched.
                     self.active_popup = ActivePopup::None;
@@ -432,7 +436,21 @@ impl ChatComposer {
                         }
                         CommandItem::UserPrompt(_) => {
                             if let Some(contents) = prompt_content {
-                                return (InputResult::Submitted(contents), true);
+                                // Attempt to expand {{args}} if the user provided them on the first line.
+                                let expanded = if let (Some(name), Some((parsed_name, args))) =
+                                    (selected_prompt_name, parse_slash_and_args(&first_line))
+                                {
+                                    // Only expand when the typed name matches the selected prompt.
+                                    if parsed_name == name {
+                                        expand_custom_prompt(&self.custom_prompts, &name, &args)
+                                            .unwrap_or(contents)
+                                    } else {
+                                        contents
+                                    }
+                                } else {
+                                    contents
+                                };
+                                return (InputResult::Submitted(expanded), true);
                             }
                             return (InputResult::None, true);
                         }
@@ -818,6 +836,17 @@ impl ChatComposer {
                     }
                 }
                 self.pending_pastes.clear();
+
+                // If user typed a custom prompt invocation (`/name ARG…`), expand it here.
+                if let Some((name, args)) =
+                    parse_slash_and_args(text.lines().next().unwrap_or(""))
+                {
+                    if let Some(expanded) =
+                        expand_custom_prompt(&self.custom_prompts, &name, &args)
+                    {
+                        text = expanded;
+                    }
+                }
 
                 // If there is neither text nor attachments, suppress submission entirely.
                 let has_attachments = !self.attached_images.is_empty();

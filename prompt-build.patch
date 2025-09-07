@@ -1,0 +1,138 @@
+diff --git a/codex-rs/core/build.rs b/codex-rs/core/build.rs
+new file mode 100644
+index 00000000..09a8fba4
+--- /dev/null
++++ b/codex-rs/core/build.rs
+@@ -0,0 +1,36 @@
++use std::{env, fs, path::PathBuf};
++
++fn main() {
++    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
++    let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
++
++    let prompt_md = PathBuf::from(&manifest_dir).join("prompt.md");
++    let prompt_local_md = PathBuf::from(&manifest_dir).join("prompt.local.md");
++    let out_path = PathBuf::from(&out_dir).join("base_instructions.txt");
++
++    // Always watch both files; if either changes, rebuild.
++    println!("cargo:rerun-if-changed={}", prompt_md.display());
++    println!("cargo:rerun-if-changed={}", prompt_local_md.display());
++
++    let (source_path, human): (PathBuf, String) = if prompt_local_md.is_file() {
++        (
++            prompt_local_md.clone(),
++            format!("prompt: {}", prompt_local_md.display()),
++        )
++    } else {
++        (
++            prompt_md.clone(),
++            "prompt: codex-rs/core/prompt.md".to_string(),
++        )
++    };
++
++    // Copy the chosen prompt into OUT_DIR for include_str! at compile time.
++    fs::copy(&source_path, &out_path).expect("failed to write base_instructions.txt");
++
++    // Surface a stable human-readable string for the TUI banner.
++    println!(
++        "cargo:rustc-env=CODEX_BASE_INSTRUCTIONS_HUMAN={}",
++        human
++    );
++}
++
+diff --git a/codex-rs/core/src/client_common.rs b/codex-rs/core/src/client_common.rs
+index 2f849239..c25794a6 100644
+--- a/codex-rs/core/src/client_common.rs
++++ b/codex-rs/core/src/client_common.rs
+@@ -10,14 +10,23 @@ use codex_protocol::models::ResponseItem;
+ use futures::Stream;
+ use serde::Serialize;
+ use std::borrow::Cow;
++
+ use std::pin::Pin;
+ use std::task::Context;
+ use std::task::Poll;
+ use tokio::sync::mpsc;
+ 
+ /// The `instructions` field in the payload sent to a model should always start
+-/// with this content.
+-const BASE_INSTRUCTIONS: &str = include_str!("../prompt.md");
++/// with this content. The file is prepared at build time by `build.rs`, which
++/// copies either `prompt.local.md` (if it exists) or `prompt.md` into
++/// `$OUT_DIR/base_instructions.txt`.
++const BASE_INSTRUCTIONS: &str = include_str!(concat!(env!("OUT_DIR"), "/base_instructions.txt"));
++
++/// Human-readable description of which prompt source is embedded.
++/// Set at build time by `build.rs` via the `CODEX_BASE_INSTRUCTIONS_HUMAN` env.
++pub fn base_instructions_source_human() -> String {
++    env!("CODEX_BASE_INSTRUCTIONS_HUMAN").to_string()
++}
+ 
+ /// API request payload for a single model turn
+ #[derive(Default, Debug, Clone)]
+@@ -35,10 +44,12 @@ pub struct Prompt {
+ 
+ impl Prompt {
+     pub(crate) fn get_full_instructions(&self, model: &ModelFamily) -> Cow<'_, str> {
+-        let base = self
+-            .base_instructions_override
+-            .as_deref()
+-            .unwrap_or(BASE_INSTRUCTIONS);
++        let base_cow = if let Some(override_str) = self.base_instructions_override.as_deref() {
++            Cow::Borrowed(override_str)
++        } else {
++            Cow::Borrowed(BASE_INSTRUCTIONS)
++        };
++        let base: &str = &base_cow;
+         let mut sections: Vec<&str> = vec![base];
+ 
+         // When there are no custom instructions, add apply_patch_tool_instructions if either:
+diff --git a/mydocs/prompt-local-override.md b/mydocs/prompt-local-override.md
+new file mode 100644
+index 00000000..301ebd40
+--- /dev/null
++++ b/mydocs/prompt-local-override.md
+@@ -0,0 +1,43 @@
++# ローカルプロンプトの優先読込（そねっち仕様）
++
++このドキュメントは、Codex 実行時に使用されるプロンプトの選択ロジックと、ローカル専用のプロンプト運用方法（そねっち仕様）をまとめたものです。
++
++- 対象バイナリ: `codex`（TUI 起動時）
++- 実装箇所: `codex-rs/core/build.rs`, `codex-rs/core/src/client_common.rs`
++
++## 読み込み優先順位
++次の順でビルド時に埋め込むプロンプトを決定します。
++
++1. リポジトリ内のローカル上書き: `codex-rs/core/prompt.local.md`（存在すれば優先）
++2. デフォルト: `codex-rs/core/prompt.md`
++
++備考: いずれもビルド時にバイナリへ埋め込まれ、実行時にファイル読み込みは行いません。
++
++## 起動時の表示（確認用）
++TUI を起動すると、使用中のプロンプトが履歴先頭に表示されます（リリースビルド時）。
++
++- 例（ローカル上書き）: `Using prompt: /…/codex-rs/core/prompt.local.md`
++- 例（デフォルト）: `Using prompt: codex-rs/core/prompt.md`
++
++デバッグビルドでは表示しません（スナップショットテスト安定のため）。
++
++## おすすめ運用（ローカル専用）
++個人用のプロンプトは Git 管理に載せず、ローカルで完結させるのが安全です（変更反映には再ビルドが必要）。
++
++- 手順（最短）
++  - `cp codex-rs/core/prompt.md codex-rs/core/prompt.local.md`
++  - （任意・手元保護）`git update-index --skip-worktree codex-rs/core/prompt.local.md`
++  - 以降は `prompt.local.md` を編集したら再ビルドで反映されます。
++
++## 旧運用（merge=ours）について
++`.gitattributes` の `codex-rs/core/prompt.md merge=ours` は撤廃済み。ランタイムでのローカル上書きは廃止し、ビルド時選択に統一しました。
++
++## ビルドと実行の例
++- リリースビルド: `cd codex-rs && cargo build -p codex-cli --release`
++- 実行: `./target/release/codex`
++
++## トラブルシュート
++- 起動時に「Using prompt: …」が出ない
++  - デバッグビルドかも: リリースビルドで確認してください。
++  - TUI 経路で起動しているか: `codex` 無引数で TUI が起動します。`codex exec` は TUI を使わないため表示されません。
++  - `prompt.local.md` を変更したら再ビルドが必要です。

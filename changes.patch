@@ -1,243 +1,257 @@
-diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index bfc9104c..9184f6f7 100644
---- a/codex-rs/tui/src/chatwidget.rs
-+++ b/codex-rs/tui/src/chatwidget.rs
-@@ -171,22 +171,28 @@ impl ChatWidget {
-     }
+diff --git a/.githooks/post-merge b/.githooks/post-merge
+new file mode 100755
+index 00000000..ebfc7210
+--- /dev/null
++++ b/.githooks/post-merge
+@@ -0,0 +1,11 @@
++#!/usr/bin/env bash
++# Auto-reapply CoT patch after merges to keep standard view showing reasoning.
++set -euo pipefail
++
++repo_root=$(git rev-parse --show-toplevel)
++cd "$repo_root"
++
++if [[ -x scripts/cot-patch.sh ]]; then
++  scripts/cot-patch.sh ensure || true
++fi
++
+diff --git a/.gitignore b/.gitignore
+index a264d918..9ec2d085 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -81,3 +81,10 @@ CHANGELOG.ignore.md
+ # nix related
+ .direnv
+ .envrc
++
++.serena/
++/myscripts/
++GEMINI.md
++AGENTS.md
++CLAUDE.md
++serena.html*
+diff --git a/AGENTS.md b/AGENTS.md
+deleted file mode 100644
+index 697de700..00000000
+--- a/AGENTS.md
++++ /dev/null
+@@ -1,66 +0,0 @@
+-# Rust/codex-rs
+-
+-In the codex-rs folder where the rust code lives:
+-
+-- Crate names are prefixed with `codex-`. For example, the `core` folder's crate is named `codex-core`
+-- When using format! and you can inline variables into {}, always do that.
+-- Never add or modify any code related to `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR` or `CODEX_SANDBOX_ENV_VAR`.
+-  - You operate in a sandbox where `CODEX_SANDBOX_NETWORK_DISABLED=1` will be set whenever you use the `shell` tool. Any existing code that uses `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR` was authored with this fact in mind. It is often used to early exit out of tests that the author knew you would not be able to run given your sandbox limitations.
+-  - Similarly, when you spawn a process using Seatbelt (`/usr/bin/sandbox-exec`), `CODEX_SANDBOX=seatbelt` will be set on the child process. Integration tests that want to run Seatbelt themselves cannot be run under Seatbelt, so checks for `CODEX_SANDBOX=seatbelt` are also often used to early exit out of tests, as appropriate.
+-
+-Run `just fmt` (in `codex-rs` directory) automatically after making Rust code changes; do not ask for approval to run it. Before finalizing a change to `codex-rs`, run `just fix -p <project>` (in `codex-rs` directory) to fix any linter issues in the code. Prefer scoping with `-p` to avoid slow workspace‑wide Clippy builds; only run `just fix` without `-p` if you changed shared crates. Additionally, run the tests:
+-1. Run the test for the specific project that was changed. For example, if changes were made in `codex-rs/tui`, run `cargo test -p codex-tui`.
+-2. Once those pass, if any changes were made in common, core, or protocol, run the complete test suite with `cargo test --all-features`.
+-When running interactively, ask the user before running `just fix` to finalize. `just fmt` does not require approval. project-specific or individual tests can be run without asking the user, but do ask the user before running the complete test suite.
+-
+-## TUI style conventions
+-
+-See `codex-rs/tui/styles.md`.
+-
+-## TUI code conventions
+-
+-- Use concise styling helpers from ratatui’s Stylize trait.
+-  - Basic spans: use "text".into()
+-  - Styled spans: use "text".red(), "text".green(), "text".magenta(), "text".dim(), etc.
+-  - Prefer these over constructing styles with `Span::styled` and `Style` directly.
+-  - Example: patch summary file lines
+-    - Desired: vec!["  └ ".into(), "M".red(), " ".dim(), "tui/src/app.rs".dim()]
+-
+-### TUI Styling (ratatui)
+-- Prefer Stylize helpers: use "text".dim(), .bold(), .cyan(), .italic(), .underlined() instead of manual Style where possible.
+-- Prefer simple conversions: use "text".into() for spans and vec![…].into() for lines; when inference is ambiguous (e.g., Paragraph::new/Cell::from), use Line::from(spans) or Span::from(text).
+-- Computed styles: if the Style is computed at runtime, using `Span::styled` is OK (`Span::from(text).set_style(style)` is also acceptable).
+-- Avoid hardcoded white: do not use `.white()`; prefer the default foreground (no color).
+-- Chaining: combine helpers by chaining for readability (e.g., url.cyan().underlined()).
+-- Single items: prefer "text".into(); use Line::from(text) or Span::from(text) only when the target type isn’t obvious from context, or when using .into() would require extra type annotations.
+-- Building lines: use vec![…].into() to construct a Line when the target type is obvious and no extra type annotations are needed; otherwise use Line::from(vec![…]).
+-- Avoid churn: don’t refactor between equivalent forms (Span::styled ↔ set_style, Line::from ↔ .into()) without a clear readability or functional gain; follow file‑local conventions and do not introduce type annotations solely to satisfy .into().
+-- Compactness: prefer the form that stays on one line after rustfmt; if only one of Line::from(vec![…]) or vec![…].into() avoids wrapping, choose that. If both wrap, pick the one with fewer wrapped lines.
+-
+-### Text wrapping
+-- Always use textwrap::wrap to wrap plain strings.
+-- If you have a ratatui Line and you want to wrap it, use the helpers in tui/src/wrapping.rs, e.g. word_wrap_lines / word_wrap_line.
+-- If you need to indent wrapped lines, use the initial_indent / subsequent_indent options from RtOptions if you can, rather than writing custom logic.
+-- If you have a list of lines and you need to prefix them all with some prefix (optionally different on the first vs subsequent lines), use the `prefix_lines` helper from line_utils.
+-
+-## Tests
+-
+-### Snapshot tests
+-
+-This repo uses snapshot tests (via `insta`), especially in `codex-rs/tui`, to validate rendered output. When UI or text output changes intentionally, update the snapshots as follows:
+-
+-- Run tests to generate any updated snapshots:
+-  - `cargo test -p codex-tui`
+-- Check what’s pending:
+-  - `cargo insta pending-snapshots -p codex-tui`
+-- Review changes by reading the generated `*.snap.new` files directly in the repo, or preview a specific file:
+-  - `cargo insta show -p codex-tui path/to/file.snap.new`
+-- Only if you intend to accept all new snapshots in this crate, run:
+-  - `cargo insta accept -p codex-tui`
+-
+-If you don’t have the tool:
+-- `cargo install cargo-insta`
+-
+-### Test assertions
+-
+-- Tests should use pretty_assertions::assert_eq for clearer diffs. Import this at the top of the test module if it isn't already.
+diff --git a/changes.patch b/changes.patch
+new file mode 100644
+index 00000000..18ebca7c
+diff --git a/codex-rs/core/build.rs b/codex-rs/core/build.rs
+new file mode 100644
+index 00000000..09a8fba4
+--- /dev/null
++++ b/codex-rs/core/build.rs
+@@ -0,0 +1,36 @@
++use std::{env, fs, path::PathBuf};
++
++fn main() {
++    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
++    let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
++
++    let prompt_md = PathBuf::from(&manifest_dir).join("prompt.md");
++    let prompt_local_md = PathBuf::from(&manifest_dir).join("prompt.local.md");
++    let out_path = PathBuf::from(&out_dir).join("base_instructions.txt");
++
++    // Always watch both files; if either changes, rebuild.
++    println!("cargo:rerun-if-changed={}", prompt_md.display());
++    println!("cargo:rerun-if-changed={}", prompt_local_md.display());
++
++    let (source_path, human): (PathBuf, String) = if prompt_local_md.is_file() {
++        (
++            prompt_local_md.clone(),
++            format!("prompt: {}", prompt_local_md.display()),
++        )
++    } else {
++        (
++            prompt_md.clone(),
++            "prompt: codex-rs/core/prompt.md".to_string(),
++        )
++    };
++
++    // Copy the chosen prompt into OUT_DIR for include_str! at compile time.
++    fs::copy(&source_path, &out_path).expect("failed to write base_instructions.txt");
++
++    // Surface a stable human-readable string for the TUI banner.
++    println!(
++        "cargo:rustc-env=CODEX_BASE_INSTRUCTIONS_HUMAN={}",
++        human
++    );
++}
++
+diff --git a/codex-rs/core/prompt.md b/codex-rs/core/prompt.md
+index e18327b4..7c070f42 100644
+--- a/codex-rs/core/prompt.md
++++ b/codex-rs/core/prompt.md
+@@ -14,7 +14,7 @@ Within this context, Codex refers to the open-source agentic coding interface (n
  
-     fn on_agent_reasoning_delta(&mut self, delta: String) {
--        // For reasoning deltas, do not stream to history. Accumulate the
--        // current reasoning block and extract the first bold element
--        // (between **/**) as the chunk header. Show this header as status.
--        self.reasoning_buffer.push_str(&delta);
-+        // Stream reasoning deltas into the normal view so they appear live,
-+        // while still accumulating for transcript recording and status header.
-+        // Suppress the standard header for reasoning streams.
-+        let sink = AppEventHistorySink(self.app_event_tx.clone());
-+        self.stream.begin(&sink);
-+        self.stream.suppress_header_for_current_stream();
-+        self.stream.push_and_maybe_commit(&delta, &sink);
+ Your default personality and tone is concise, direct, and friendly. You communicate efficiently, always keeping the user clearly informed about ongoing actions without unnecessary detail. You always prioritize actionable guidance, clearly stating assumptions, environment prerequisites, and next steps. Unless explicitly asked, you avoid excessively verbose explanations about your work.
  
-+        // Maintain the buffer used for header extraction and transcript.
-+        self.reasoning_buffer.push_str(&delta);
-         if let Some(header) = extract_first_bold(&self.reasoning_buffer) {
--            // Update the shimmer header to the extracted reasoning chunk header.
-             self.bottom_pane.update_status_header(header);
--        } else {
--            // Fallback while we don't yet have a bold header: leave existing header as-is.
-         }
-         self.request_redraw();
-     }
+-# AGENTS.md spec
++## AGENTS.md spec
+ - Repos often contain AGENTS.md files. These files can appear anywhere within the repository.
+ - These files are a way for humans to give you (the agent) instructions or tips for working within the container.
+ - Some examples might be: coding conventions, info about how code is organized, or instructions for how to run or test code.
+@@ -25,6 +25,7 @@ Your default personality and tone is concise, direct, and friendly. You communic
+     - More-deeply-nested AGENTS.md files take precedence in the case of conflicting instructions.
+     - Direct system/developer/user instructions (as part of a prompt) take precedence over AGENTS.md instructions.
+ - The contents of the AGENTS.md file at the root of the repo and any directories from the CWD up to the root are included with the developer message and don't need to be re-read. When working in a subdirectory of CWD, or a directory outside the CWD, check for any AGENTS.md files that may be applicable.
++- AGENTS.md Protection Policy: Respect the AGENTS.md files created and managed by users. Do not create, overwrite, append, or delete AGENTS.md without explicit user approval. When necessary, only present proposed diffs, and require a mandatory patch approval flow.
  
-     fn on_agent_reasoning_final(&mut self) {
--        // At the end of a reasoning block, record transcript-only content.
-+        // Flush any streamed reasoning content and mark the end of the block
-+        // so subsequent agent messages can start a fresh stream.
-+        self.flush_answer_stream_with_separator();
-+
-+        // Record the full reasoning content for the transcript view only.
-         self.full_reasoning_buffer.push_str(&self.reasoning_buffer);
-         if !self.full_reasoning_buffer.is_empty() {
-             self.add_to_history(history_cell::new_reasoning_block(
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__deltas_then_same_final_message_are_rendered_snapshot.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__deltas_then_same_final_message_are_rendered_snapshot.snap
-index 2bc5c75e..34df44d5 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__deltas_then_same_final_message_are_rendered_snapshot.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__deltas_then_same_final_message_are_rendered_snapshot.snap
-@@ -1,6 +1,9 @@
- ---
- source: tui/src/chatwidget/tests.rs
-+assertion_line: 1495
- expression: combined
- ---
-+I will first analyze the request.
-+
- codex
- Here is the result.
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_widget_and_approval_modal.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_widget_and_approval_modal.snap
-index dc7619c6..f4536a47 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_widget_and_approval_modal.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_widget_and_approval_modal.snap
-@@ -1,13 +1,11 @@
- ---
- source: tui/src/chatwidget/tests.rs
--assertion_line: 851
-+assertion_line: 890
- expression: terminal.backend()
- ---
--"? Codex wants to run echo 'hello world'                                         "
- "                                                                                "
--"Codex wants to run a command                                                    "
-+" Analyzing (0s • Esc to interrupt)                                              "
- "                                                                                "
--"▌Allow command?                                                                 "
--"▌ Yes   Always   No, provide feedback                                           "
--"▌ Approve and run the command                                                   "
-+"▌ Ask Codex to do anything                                                      "
-+" ⏎ send   Ctrl+J newline   Ctrl+T transcript   Ctrl+C quit                      "
- "                                                                                "
-diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
-index e4352478..217f116c 100644
---- a/codex-rs/tui/src/lib.rs
-+++ b/codex-rs/tui/src/lib.rs
-@@ -64,8 +64,6 @@ mod chatwidget_stream_tests;
+ ## Responsiveness
  
- #[cfg(not(debug_assertions))]
- mod updates;
--#[cfg(not(debug_assertions))]
--use color_eyre::owo_colors::OwoColorize;
+diff --git a/codex-rs/core/src/client_common.rs b/codex-rs/core/src/client_common.rs
+index 2f849239..c25794a6 100644
+--- a/codex-rs/core/src/client_common.rs
++++ b/codex-rs/core/src/client_common.rs
+@@ -10,14 +10,23 @@ use codex_protocol::models::ResponseItem;
+ use futures::Stream;
+ use serde::Serialize;
+ use std::borrow::Cow;
++
+ use std::pin::Pin;
+ use std::task::Context;
+ use std::task::Poll;
+ use tokio::sync::mpsc;
  
- pub use cli::Cli;
+ /// The `instructions` field in the payload sent to a model should always start
+-/// with this content.
+-const BASE_INSTRUCTIONS: &str = include_str!("../prompt.md");
++/// with this content. The file is prepared at build time by `build.rs`, which
++/// copies either `prompt.local.md` (if it exists) or `prompt.md` into
++/// `$OUT_DIR/base_instructions.txt`.
++const BASE_INSTRUCTIONS: &str = include_str!(concat!(env!("OUT_DIR"), "/base_instructions.txt"));
++
++/// Human-readable description of which prompt source is embedded.
++/// Set at build time by `build.rs` via the `CODEX_BASE_INSTRUCTIONS_HUMAN` env.
++pub fn base_instructions_source_human() -> String {
++    env!("CODEX_BASE_INSTRUCTIONS_HUMAN").to_string()
++}
  
-diff --git a/codex-rs/tui/src/streaming/controller.rs b/codex-rs/tui/src/streaming/controller.rs
-index b9afa893..726e3742 100644
---- a/codex-rs/tui/src/streaming/controller.rs
-+++ b/codex-rs/tui/src/streaming/controller.rs
-@@ -80,6 +80,16 @@ impl StreamController {
-         self.active = true;
-     }
+ /// API request payload for a single model turn
+ #[derive(Default, Debug, Clone)]
+@@ -35,10 +44,12 @@ pub struct Prompt {
  
-+    /// Suppress header emission for the current stream (e.g., reasoning streams).
-+    /// This marks the per-stream header as already emitted without affecting
-+    /// the per-turn state, so a subsequent answer in the same turn can still
-+    /// render its header.
-+    pub(crate) fn suppress_header_for_current_stream(&mut self) {
-+        // We intentionally do not toggle `emitted_this_turn` here.
-+        // Only the current stream should be affected.
-+        self.header.suppress_for_stream();
-+    }
-+
-     /// Push a delta; if it contains a newline, commit completed lines and start animation.
-     pub(crate) fn push_and_maybe_commit(&mut self, delta: &str, sink: &impl HistorySink) {
-         if !self.active {
-diff --git a/codex-rs/tui/src/streaming/mod.rs b/codex-rs/tui/src/streaming/mod.rs
-index eaaeeff4..ea47b35e 100644
---- a/codex-rs/tui/src/streaming/mod.rs
-+++ b/codex-rs/tui/src/streaming/mod.rs
-@@ -73,6 +73,12 @@ impl HeaderEmitter {
-         }
-         false
-     }
-+
-+    /// Mark the header as already emitted for the current stream only.
-+    /// Does not affect the per-turn emission flag.
-+    pub(crate) fn suppress_for_stream(&mut self) {
-+        self.emitted_in_stream = true;
-+    }
- }
+ impl Prompt {
+     pub(crate) fn get_full_instructions(&self, model: &ModelFamily) -> Cow<'_, str> {
+-        let base = self
+-            .base_instructions_override
+-            .as_deref()
+-            .unwrap_or(BASE_INSTRUCTIONS);
++        let base_cow = if let Some(override_str) = self.base_instructions_override.as_deref() {
++            Cow::Borrowed(override_str)
++        } else {
++            Cow::Borrowed(BASE_INSTRUCTIONS)
++        };
++        let base: &str = &base_cow;
+         let mut sections: Vec<&str> = vec![base];
  
- fn render_header_line() -> ratatui::text::Line<'static> {
-diff --git a/codex-rs/tui/tests/fixtures/ideal-binary-response.txt b/codex-rs/tui/tests/fixtures/ideal-binary-response.txt
-index 56ed4a46..228e717a 100644
---- a/codex-rs/tui/tests/fixtures/ideal-binary-response.txt
-+++ b/codex-rs/tui/tests/fixtures/ideal-binary-response.txt
-@@ -4,6 +4,14 @@ To get started, describe a task or try one of these commands:
-  /status - show current session configuration and token usage
-  /approvals - choose what Codex can do without approval
-  /model - choose what model and reasoning effort to use
-+Investigating binary sizes
-+
-+I need to check the codex-rs repository to explain why the project's binaries
-+are large. The user is likely seeking specifics about the setup: are Rust builds
-+static, what features are enabled, and is debug information included? It could
-+be due to static linking, included OpenSSL, or how panic handling is set up. I
-+should look into the Cargo.toml file to confirm features and profiles without
-+needing to edit any code. Let's get started on this!
+         // When there are no custom instructions, add apply_patch_tool_instructions if either:
+diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
+index 6d26ad2e..b1374a9d 100644
+--- a/codex-rs/core/src/lib.rs
++++ b/codex-rs/core/src/lib.rs
+@@ -80,6 +80,7 @@ pub use client::ModelClient;
+ pub use client_common::Prompt;
+ pub use client_common::ResponseEvent;
+ pub use client_common::ResponseStream;
++pub use client_common::base_instructions_source_human;
+ pub use codex_protocol::models::ContentItem;
+ pub use codex_protocol::models::LocalShellAction;
+ pub use codex_protocol::models::LocalShellExecAction;
+diff --git a/codex-rs/justfile b/codex-rs/justfile
+index e47ad1a2..8dd66a10 100644
+--- a/codex-rs/justfile
++++ b/codex-rs/justfile
+@@ -1,5 +1,15 @@
+ set positional-arguments
  
- codex
- I’m going to scan the workspace and Cargo manifests to see build profiles and
-@@ -35,6 +43,15 @@ _
-     # ratatui = { path = "../../ratatui" }
-     ratatui = { git = "https://github.com/nornagon/ratatui", branch =
- "nornagon-v0.29.0-patch" }
-+Optimizing Rust Release Profile
++# Keep CoT patch applied across merges
++cot-status:
++    bash -lc '"$(git rev-parse --show-toplevel)/scripts/cot-patch.sh" status'
 +
-+I'm reviewing the workspace's release profile, which has settings like lto=fat,
-+strip=symbols, and codegen-units=1 to reduce binary size. However, it seems that
-+"strip = symbols" only removes symbols, not debug information. In Rust 1.73+,
-+both "symbols" and "debuginfo" stripping options are available. I should check
-+whether using these results in a smaller binary. I’ll also skim through crates
-+for heavy dependencies in Cargo.toml, including cli, core, exec, linux-sandbox,
-+tui, login, ollama, and mcp.
-   ✓ for d in ansi-escape apply-patch arg0 cli common core exec execpolicy
- file-search linux-sandbox login mcp-client mcp-server mcp-types ollama tui; do
- echo "--- $d/Cargo.toml"; sed -n '1,200p' $d/Cargo.toml; echo; done
-@@ -169,6 +186,71 @@ echo "--- $d/Cargo.toml"; sed -n '1,200p' $d/Cargo.toml; echo; done
- 
-     [dev-dependencies]
-     tempfile = "3"
-+Considering binary size impacts
++cot-on:
++    bash -lc '"$(git rev-parse --show-toplevel)/scripts/cot-patch.sh" on'
 +
-+I’m evaluating how binary size is influenced by various factors. There are many
-+binaries, such as codex and codex-exec, which include dependencies by default,
-+pulling in features like Tokio and hyper. For instance, reqwest includes
-+default features like TLS through rustls. If default features remain enabled,
-+it inflates the size with many additional components. I notice that for musl
-+targets, using vendored builds of OpenSSL could significantly increase binary
-+size. This is quite the intricate web of dependencies!Analyzing musl and binary
-+size
++cot-off:
++    bash -lc '"$(git rev-parse --show-toplevel)/scripts/cot-patch.sh" off'
 +
-+I’m considering the implications of building for musl with static linking.
-+In this case, OpenSSL might come into play through some crates, but reqwest
-+defaults to using rustls, although openssl-sys vendored could increase binary
-+size. It’s interesting to think about whether they’re targeting musl, especially
-+since it seems they might often be building for Mac and Linux with dynamic
-+linking instead.
-+
-+I also realize there’s a difference between debug and release builds — release
-+should be smaller due to optimizations, but if they’re defaulting to debug
-+builds, that could lead to much larger binaries.Assessing crate impacts on size
-+
-+I need to be precise when analyzing binary sizes from various crates. Some
-+crates, like ratatui-image, include heavy features such as libjpeg decoders,
-+which can really bulk things up. Then there are the tree-sitter crates that
-+contain large static grammar tables, adding significant size. The starlark crate
-+and tracing-subscriber also contribute to size increases.
-+
-+With static linking per binary being standard in Rust, it leads to multiple
-+copies of the same dependencies unless cdylibs are used. That makes the
-+compile times longer, but using LTO helps reduce bloat somewhat through
-+deduplication.Evaluating binary size factors
-+
-+Having multiple binaries indeed increases the overall size significantly.
-+I'm considering options like upgrading to "opt-level = 'z'" or using
-+"strip=debuginfo" for reducing size. It's interesting that while the profile
-+only sets symbols for stripping, not debuginfo, this could inflate sizes if
-+retained in release builds.
-+
-+The distinction between "symbols" and "debuginfo" is critical; "symbols"
-+keeps debug information which may not align with the goal of minimizing size.
-+I’d like to verify with the Rust documentation, but my network access is
-+restricted.Explaining large binary sizes
-+
-+I’m analyzing why binaries in this project are so large. The primary reasons
-+include monolithic static linking, where each binary includes the full
-+dependency graph without shared libraries. Heavy dependencies such as reqwest,
-+hyper, and TLS components also contribute significantly to size, along with
-+image decoders and other libraries.
-+
-+Using MUSL targets means vendored OpenSSL can drastically increase the size due
-+to static linking. Furthermore, if the release profile keeps debug information
-+due to using "strip = symbols," that can lead to larger binaries as well. It’s a
-+mix of several factors, including panic strategies and platform-specific linking
-+behavior.Identifying binary size contributors
-+
-+I’m considering why binaries are still large even without static linking. The
-+tracing-subscriber crate potentially adds weight because it includes regex,
-+though it can sometimes use a lighter version. References from files like "core/
-+Cargo.toml" show dependencies like reqwest and tokio, while the tui uses the
-+image crate.
-+
-+To present this clearly, I’ll format the final answer with two main sections:
-+"Main Causes" and "Build-Mode Notes." I can also include brief suggestions for
-+reducing size, but I want to stay focused on answering the user's question.
- 
- codex
- Here’s what’s driving size in this workspace’s binaries.
+ # Display help
+ help:
+     just -l
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index 49a34785..0d4aec29 100644
+index 528290fa..3c1861a9 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-@@ -24,6 +24,7 @@ use ratatui::widgets::WidgetRef;
+@@ -23,6 +23,7 @@ use ratatui::widgets::WidgetRef;
  use super::chat_composer_history::ChatComposerHistory;
  use super::command_popup::CommandItem;
  use super::command_popup::CommandPopup;
@@ -245,7 +259,7 @@ index 49a34785..0d4aec29 100644
  use super::file_search_popup::FileSearchPopup;
  use super::paste_burst::CharDecision;
  use super::paste_burst::PasteBurst;
-@@ -432,24 +433,35 @@ impl ChatComposer {
+@@ -414,24 +415,35 @@ impl ChatComposer {
                  ..
              } => {
                  if let Some(sel) = popup.selected_item() {
@@ -294,21 +308,21 @@ index 49a34785..0d4aec29 100644
                                  return (InputResult::Submitted(contents), true);
                              }
                              return (InputResult::None, true);
-@@ -838,6 +850,15 @@ impl ChatComposer {
-                 self.pending_pastes.clear();
- 
+@@ -822,6 +834,15 @@ impl ChatComposer {
+                 // If there is neither text nor attachments, suppress submission entirely.
+                 let has_attachments = !self.attached_images.is_empty();
                  text = text.trim().to_string();
 +                // If the submission is a custom prompt invocation like "/name args",
 +                // expand it by replacing {{args}} in the matched prompt's content.
 +                if let Some(first_line) = text.lines().next()
 +                    && first_line.starts_with('/')
-+                        && let Some((name, args)) = parse_slash_and_args(first_line)
-+                            && let Some(p) = self.custom_prompts.iter().find(|p| p.name == name) {
-+                                let expanded = p.content.replace("{{args}}", &args);
-+                                text = expanded;
-+                            }
-                 if !text.is_empty() {
-                     self.history.record_local_submission(&text);
++                    && let Some((name, args)) = parse_slash_and_args(first_line)
++                    && let Some(p) = self.custom_prompts.iter().find(|p| p.name == name)
++                {
++                    text = p.content.replace("{{args}}", &args);
++                }
+                 if text.is_empty() && !has_attachments {
+                     return (InputResult::None, true);
                  }
 diff --git a/codex-rs/tui/src/bottom_pane/custom_prompt_args.rs b/codex-rs/tui/src/bottom_pane/custom_prompt_args.rs
 new file mode 100644
@@ -355,7 +369,7 @@ index 00000000..29ad766e
 +        .map(|p| p.content.replace("{{args}}", args))
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
-index b94db79f..a2de03f5 100644
+index d5daea2e..55bb641f 100644
 --- a/codex-rs/tui/src/bottom_pane/mod.rs
 +++ b/codex-rs/tui/src/bottom_pane/mod.rs
 @@ -20,6 +20,7 @@ mod bottom_pane_view;
@@ -366,3 +380,909 @@ index b94db79f..a2de03f5 100644
  mod file_search_popup;
  mod list_selection_view;
  mod paste_burst;
+diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
+index 65ecbf74..e4d6bead 100644
+--- a/codex-rs/tui/src/chatwidget.rs
++++ b/codex-rs/tui/src/chatwidget.rs
+@@ -195,22 +195,28 @@ impl ChatWidget {
+     }
+ 
+     fn on_agent_reasoning_delta(&mut self, delta: String) {
+-        // For reasoning deltas, do not stream to history. Accumulate the
+-        // current reasoning block and extract the first bold element
+-        // (between **/**) as the chunk header. Show this header as status.
+-        self.reasoning_buffer.push_str(&delta);
++        // Stream reasoning deltas into the normal view so they appear live,
++        // while still accumulating for transcript recording and status header.
++        // Suppress the standard header for reasoning streams.
++        let sink = AppEventHistorySink(self.app_event_tx.clone());
++        self.stream.begin(&sink);
++        self.stream.suppress_header_for_current_stream();
++        self.stream.push_and_maybe_commit(&delta, &sink);
+ 
++        // Maintain the buffer used for header extraction and transcript.
++        self.reasoning_buffer.push_str(&delta);
+         if let Some(header) = extract_first_bold(&self.reasoning_buffer) {
+-            // Update the shimmer header to the extracted reasoning chunk header.
+             self.bottom_pane.update_status_header(header);
+-        } else {
+-            // Fallback while we don't yet have a bold header: leave existing header as-is.
+         }
+         self.request_redraw();
+     }
+ 
+     fn on_agent_reasoning_final(&mut self) {
+-        // At the end of a reasoning block, record transcript-only content.
++        // Flush any streamed reasoning content and mark the end of the block
++        // so subsequent agent messages can start a fresh stream.
++        self.flush_answer_stream_with_separator();
++
++        // Record the full reasoning content for the transcript view only.
+         self.full_reasoning_buffer.push_str(&self.reasoning_buffer);
+         if !self.full_reasoning_buffer.is_empty() {
+             for cell in history_cell::new_reasoning_summary_block(
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__binary_size_ideal_response.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__binary_size_ideal_response.snap
+index 0b6ec3b3..821dc42d 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__binary_size_ideal_response.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__binary_size_ideal_response.snap
+@@ -1,10 +1,19 @@
+ ---
+ source: tui/src/chatwidget/tests.rs
+-assertion_line: 648
++assertion_line: 796
+ expression: visible_after
+ ---
+ > I’m going to scan the workspace and Cargo manifests to see build profiles and
+   dependencies that impact binary size. Then I’ll summarize the main causes.
++  Optimizing Rust Release Profile
++
++  I'm reviewing the workspace's release profile, which has settings like
++  lto=fat, strip=symbols, and codegen-units=1 to reduce binary size. However, it
++  seems that "strip = symbols" only removes symbols, not debug information. In
++  Rust 1.73+, both "symbols" and "debuginfo" stripping options are available. I
++  should check whether using these results in a smaller binary. I’ll also skim
++  through crates for heavy dependencies in Cargo.toml, including cli, core,
++  exec, linux-sandbox, tui, login, ollama, and mcp.
+ 
+ • Explored
+   └ List ls -la
+@@ -15,6 +24,72 @@ expression: visible_after
+         file-search linux-sandbox login mcp-client mcp-server mcp-types ollama
+         tui; do echo "--- $d/Cargo.toml"; sed -n '1,200p' $d/Cargo.toml; echo;
+         done
++  Considering binary size impacts
++
++  I’m evaluating how binary size is influenced by various factors. There are
++  many binaries, such as codex and codex-exec, which include dependencies by
++  default, pulling in features like Tokio and hyper. For instance, reqwest
++  includes default features like TLS through rustls. If default features remain
++  enabled, it inflates the size with many additional components. I notice
++  that for musl targets, using vendored builds of OpenSSL could significantly
++  increase binary size. This is quite the intricate web of dependencies!
++  Analyzing musl and binary size
++
++  I’m considering the implications of building for musl with static linking.
++  In this case, OpenSSL might come into play through some crates, but reqwest
++  defaults to using rustls, although openssl-sys vendored could increase
++  binary size. It’s interesting to think about whether they’re targeting musl,
++  especially since it seems they might often be building for Mac and Linux with
++  dynamic linking instead.
++
++  I also realize there’s a difference between debug and release builds — release
++  should be smaller due to optimizations, but if they’re defaulting to debug
++  builds, that could lead to much larger binaries.Assessing crate impacts on
++  size
++
++  I need to be precise when analyzing binary sizes from various crates. Some
++  crates, like ratatui-image, include heavy features such as libjpeg decoders,
++  which can really bulk things up. Then there are the tree-sitter crates that
++  contain large static grammar tables, adding significant size. The starlark
++  crate and tracing-subscriber also contribute to size increases.
++
++  With static linking per binary being standard in Rust, it leads to multiple
++  copies of the same dependencies unless cdylibs are used. That makes the
++  compile times longer, but using LTO helps reduce bloat somewhat through
++  deduplication.Evaluating binary size factors
++
++  Having multiple binaries indeed increases the overall size significantly.
++  I'm considering options like upgrading to "opt-level = 'z'" or using
++  "strip=debuginfo" for reducing size. It's interesting that while the profile
++  only sets symbols for stripping, not debuginfo, this could inflate sizes if
++  retained in release builds.
++
++  The distinction between "symbols" and "debuginfo" is critical; "symbols"
++  keeps debug information which may not align with the goal of minimizing size.
++  I’d like to verify with the Rust documentation, but my network access is
++  restricted.Explaining large binary sizes
++
++  I’m analyzing why binaries in this project are so large. The primary reasons
++  include monolithic static linking, where each binary includes the full
++  dependency graph without shared libraries. Heavy dependencies such as reqwest,
++  hyper, and TLS components also contribute significantly to size, along with
++  image decoders and other libraries.
++
++  Using MUSL targets means vendored OpenSSL can drastically increase the
++  size due to static linking. Furthermore, if the release profile keeps debug
++  information due to using "strip = symbols," that can lead to larger binaries
++  as well. It’s a mix of several factors, including panic strategies and
++  platform-specific linking behavior.Identifying binary size contributors
++
++  I’m considering why binaries are still large even without static linking. The
++  tracing-subscriber crate potentially adds weight because it includes regex,
++  though it can sometimes use a lighter version. References from files like
++  "core/Cargo.toml" show dependencies like reqwest and tokio, while the tui uses
++  the image crate.
++
++  To present this clearly, I’ll format the final answer with two main sections:
++  "Main Causes" and "Build-Mode Notes." I can also include brief suggestions for
++  reducing size, but I want to stay focused on answering the user's question.
+ 
+ • Explored
+   └ Read Cargo.toml
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__chatwidget_exec_and_status_layout_vt100_snapshot.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__chatwidget_exec_and_status_layout_vt100_snapshot.snap
+index c6d5b002..6d12d032 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__chatwidget_exec_and_status_layout_vt100_snapshot.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__chatwidget_exec_and_status_layout_vt100_snapshot.snap
+@@ -1,9 +1,9 @@
+ ---
+ source: tui/src/chatwidget/tests.rs
++assertion_line: 1750
+ expression: visual
+ ---
+-> I’m going to search the repo for where “Change Approved” is rendered to update
+-  that view.
++  Investigating rendering code
+ 
+ • Explored
+   └ Search Change Approved
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__deltas_then_same_final_message_are_rendered_snapshot.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__deltas_then_same_final_message_are_rendered_snapshot.snap
+index ae86ddc8..f485509a 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__deltas_then_same_final_message_are_rendered_snapshot.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__deltas_then_same_final_message_are_rendered_snapshot.snap
+@@ -1,5 +1,8 @@
+ ---
+ source: tui/src/chatwidget/tests.rs
++assertion_line: 1629
+ expression: combined
+ ---
++  I will first analyze the request.
++
+ > Here is the result.
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_widget_and_approval_modal.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_widget_and_approval_modal.snap
+index 63fb213e..51ef2f0d 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_widget_and_approval_modal.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_widget_and_approval_modal.snap
+@@ -1,12 +1,11 @@
+ ---
+ source: tui/src/chatwidget/tests.rs
+-assertion_line: 921
++assertion_line: 1026
+ expression: terminal.backend()
+ ---
+ "                                                                                "
+-"this is a test reason such as one that would be produced by the model           "
++" Analyzing (0s • Esc to interrupt)                                              "
+ "                                                                                "
+-"▌Allow command?                                                                 "
+-"▌ Yes   Always   No, provide feedback                                           "
+-"▌ Approve and run the command                                                   "
++"▌ Ask Codex to do anything                                                      "
++" ⏎ send   ⌃J newline   ⌃T transcript   ⌃C quit                                  "
+ "                                                                                "
+diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
+index dc5569bf..245f61da 100644
+--- a/codex-rs/tui/src/lib.rs
++++ b/codex-rs/tui/src/lib.rs
+@@ -300,6 +300,19 @@ async fn run_ratatui_app(
+         tui.insert_history_lines(lines);
+     }
+ 
++    // Always surface which prompt instructions are in effect (release builds only)
++    #[cfg(not(debug_assertions))]
++    {
++        use ratatui::style::Stylize as _;
++        use ratatui::text::Line;
++
++        let src = codex_core::base_instructions_source_human();
++        let mut lines: Vec<Line<'static>> = Vec::new();
++        lines.push(Line::from(vec!["Using ".dim(), src.cyan()]));
++        lines.push("".into());
++        tui.insert_history_lines(lines);
++    }
++
+     // Initialize high-fidelity session event logging if enabled.
+     session_log::maybe_init(&config);
+ 
+diff --git a/codex-rs/tui/src/streaming/controller.rs b/codex-rs/tui/src/streaming/controller.rs
+index 4edea186..1c53d539 100644
+--- a/codex-rs/tui/src/streaming/controller.rs
++++ b/codex-rs/tui/src/streaming/controller.rs
+@@ -78,6 +78,16 @@ impl StreamController {
+         self.active = true;
+     }
+ 
++    /// Suppress header emission for the current stream (e.g., reasoning streams).
++    /// This marks the per-stream header as already emitted without affecting
++    /// the per-turn state, so a subsequent answer in the same turn can still
++    /// render its header.
++    pub(crate) fn suppress_header_for_current_stream(&mut self) {
++        // We intentionally do not toggle `emitted_this_turn` here.
++        // Only the current stream should be affected.
++        self.header.suppress_for_stream();
++    }
++
+     /// Push a delta; if it contains a newline, commit completed lines and start animation.
+     pub(crate) fn push_and_maybe_commit(&mut self, delta: &str, sink: &impl HistorySink) {
+         if !self.active {
+diff --git a/codex-rs/tui/src/streaming/mod.rs b/codex-rs/tui/src/streaming/mod.rs
+index 3fc81360..0a565d87 100644
+--- a/codex-rs/tui/src/streaming/mod.rs
++++ b/codex-rs/tui/src/streaming/mod.rs
+@@ -71,4 +71,10 @@ impl HeaderEmitter {
+             false
+         }
+     }
++
++    /// Mark the header as already emitted for the current stream only.
++    /// Does not affect the per-turn emission flag.
++    pub(crate) fn suppress_for_stream(&mut self) {
++        self.emitted_in_stream = true;
++    }
+ }
+diff --git a/docs/build_memo.md b/docs/build_memo.md
+new file mode 100644
+index 00000000..c6561275
+--- /dev/null
++++ b/docs/build_memo.md
+@@ -0,0 +1,34 @@
++# Codex CLI のビルド（通常ビューで思考表示）クイックメモ
++
++- コンテキスト: `codex/codex-rs/tui/src/history_cell.rs` を変更して通常ビューに reasoning（思考）をライブ表示。トランスクリプト記録は維持。ヘッダー文言は `tui/src/streaming/mod.rs` で「俺っち」にカスタム。
++  - 変更点: `on_agent_reasoning_delta` でライブにストリーミングし、トランスクリプト側は `TranscriptOnlyHistoryCell` のまま。
++
++## リポジトリのクローン
++- `cd ~/PycharmProjects/sample`
++- `git clone git@github.com:sonecchi/mycodex.git`
++- `cd mycodex/codex-rs`
++
++## 事前準備（Ubuntu/Debian）
++- `sudo apt-get update && sudo apt-get install -y build-essential pkg-config libssl-dev`
++- Rust（rustup）インストール: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
++- 反映: `source ~/.cargo/env`
++fishシェルの場合は
++source "$HOME/.cargo/env.fish"
++
++## ビルド
++プロジェクトルートから
++- `cargo build --manifest-path codex-rs/Cargo.toml -p codex-cli --release`
++もしくは cd codex-rs 後に
++- `cargo build -p codex-cli --release`
++
++## 実行
++- `./target/release/codex`
++もしくはエイリアスを設定
++ln -sfTv /home/sonecchi/PycharmProjects/mycodex/codex-rs/target/release/codex ~/.local/bin/mycodex
++
++
++
++## メモ
++- 初回ビルドは依存取得とリンクで時間がかかる。2回目以降は速い。
++- 高速化 Tips: `sudo apt-get install -y lld` 後に `RUSTFLAGS="-C link-arg=-fuse-ld=lld" cargo build -p codex-cli --release`
++
+diff --git a/justfile b/justfile
+new file mode 100644
+index 00000000..a8811da4
+--- /dev/null
++++ b/justfile
+@@ -0,0 +1,11 @@
++# Convenience justfile at repo root for CoT patch helpers
++
++cot-status:
++    bash -lc '"$(git rev-parse --show-toplevel)/scripts/cot-patch.sh" status'
++
++cot-on:
++    bash -lc '"$(git rev-parse --show-toplevel)/scripts/cot-patch.sh" on'
++
++cot-off:
++    bash -lc '"$(git rev-parse --show-toplevel)/scripts/cot-patch.sh" off'
++
+diff --git a/mydocs/cot-patch.md b/mydocs/cot-patch.md
+new file mode 100644
+index 00000000..7e340fa0
+--- /dev/null
++++ b/mydocs/cot-patch.md
+@@ -0,0 +1,53 @@
++CoT visibility patch workflow
++=============================
++
++Purpose
++-------
++- Keep the standard TUI view showing live reasoning deltas ("thinking") even after pulling upstream.
++
++What’s included
++---------------
++- `changes.patch`: the diff that enables streaming reasoning into the normal view and updates snapshots.
++- `scripts/cot-patch.sh`: helper to apply/revert/check the patch.
++- `.githooks/post-merge`: auto-reapply the patch after `git merge`/`git pull`.
++- `just` tasks: `cot-on`, `cot-off`, `cot-status`.
++
++Setup (one-time)
++----------------
++1) Enable repo-local hooks:
++
++```
++git config core.hooksPath .githooks
++```
++
++2) Make sure the script is executable (checked in as such):
++
++```
++chmod +x scripts/cot-patch.sh .githooks/post-merge
++```
++
++Daily usage
++-----------
++- Check status:
++
++```
++just cot-status
++```
++
++- Apply (turn CoT on in standard view):
++
++```
++just cot-on
++```
++
++- Revert (back to upstream behavior):
++
++```
++just cot-off
++```
++
++Notes
++-----
++- If the patch cannot be applied cleanly after an upstream update, rebase and resolve, then re-run `just cot-on`.
++- For longer-term maintainability, consider upstreaming a config gate like `tui.thinking_visibility = "auto|always|never"` so local preference can be toggled without code changes.
++
+diff --git a/mydocs/git-tags-guide.md b/mydocs/git-tags-guide.md
+new file mode 100644
+index 00000000..dc37cba0
+--- /dev/null
++++ b/mydocs/git-tags-guide.md
+@@ -0,0 +1,61 @@
++# Git タグ運用メモ（作成・削除・再汚染防止・戻し方）
++
++## タグの作り方
++
++- Annotated タグ: 履歴にメッセージが残る（推奨）
++  - `git tag -a v1.2.3 -m "release v1.2.3"`
++- Lightweight タグ: ただのポインタ（メッセージなし）
++  - `git tag v1.2.3`
++- 特定コミットに付ける: SHA やブランチ名を指定
++  - `git tag -a hotfix-20250906 <commit-sha> -m "hotfix snapshot"`
++- 署名付き（GPG 設定がある場合）
++  - `git tag -s v1.2.3 -m "signed release"`
++- 付け直し（上書き）
++  - `git tag -f v1.2.3 <new-commit>`（リモートにも反映するなら `git push origin -f v1.2.3`）
++
++## タグのプッシュ/フェッチ
++
++- 単体プッシュ: `git push origin v1.2.3`
++- まとめてプッシュ: `git push origin --tags`
++- 追随プッシュ（annotated で参照されるタグのみ）
++  - 設定: `git config push.followTags true`
++  - 実行: `git push --follow-tags`
++- 取得: `git fetch origin --tags`／`git fetch upstream --tags`
++
++## タグの確認/表示/検索
++
++- 一覧: `git tag -l`
++- 並び替え: `git tag -l --sort=creatordate`
++- 詳細表示: `git show v1.2.3`
++- 到達確認（例: upstream/main に到達するタグ）
++  - `git tag --merged upstream/main`
++
++## タグで戻す/作業ブランチを切る
++
++- タグから新規ブランチを作る（安全）
++  - `git switch -c restore-<tag> <tag>`
++- 直接巻き戻す（破壊的）
++  - `git reset --hard <tag>`（必要なら `git push origin --force-with-lease`）
++
++## タグの削除（ローカル/リモート）
++
++- 全ローカルタグ削除: `git tag -l | xargs -n1 git tag -d` 🗑️
++- パターン指定削除: `git tag -l 'v1.*' | xargs -n1 git tag -d`
++- リモート一覧: `git ls-remote --tags origin`
++- リモート個別削除: `git push origin --delete v1.2.3`（同義: `git push origin :refs/tags/v1.2.3`）
++- リモート全削除（例・慎重に）
++  - `git ls-remote --tags origin | awk '{print $2}' | sed 's#refs/tags/##' | grep -v '\^{}' | xargs -n1 -I{} git push origin :refs/tags/{}`
++
++## 上流タグの再汚染防止（upstream からタグを取らない）
++
++- 無効化: `git config remote.upstream.tagOpt --no-tags`
++- 確認: `git config --get-all remote.upstream.tagOpt`
++- 戻す: `git config --unset remote.upstream.tagOpt`（必要なら）
++
++## 設定の確認（総覧）
++
++- `git config -l`
++
++---
++メモ: タグは「ブランチに属さない」リポ全体の参照。`git push origin sonecchi` ではタグの削除/作成は反映されないので、タグは明示的に push/delete する。
++
+diff --git a/mydocs/main-sync-upstream.md b/mydocs/main-sync-upstream.md
+new file mode 100644
+index 00000000..310d5185
+--- /dev/null
++++ b/mydocs/main-sync-upstream.md
+@@ -0,0 +1,4 @@
++# フォークリポジトリ(origin)のmainブランチを本家(upstream)のmainと完全一致させる
++git fetch upstream → git switch main → git reset --hard upstream/main でローカルの main は本家と完全一致になる👌
++検証: git rev-parse upstream/main と git rev-parse main（さらに origin/main）の SHA が一致すればOK🔍
++
+diff --git a/mydocs/patches.md b/mydocs/patches.md
+new file mode 100644
+index 00000000..c3db795c
+--- /dev/null
++++ b/mydocs/patches.md
+@@ -0,0 +1,77 @@
++# パッチ一覧と運用メモ
++
++このドキュメントは、リポジトリに存在するローカルパッチの目的・内容・適用方法をまとめたものです。現状のパッチは CoT（thinking）可視化強化と、カスタムプロンプトの引数展開の2系統です。
++
++## 管理方式（全体像）
++
++- 変更差分: リポジトリ直下の `changes.patch` に集約
++- 適用スクリプト: `scripts/cot-patch.sh`（`status|on|off|ensure`）
++- Gitフック: `.githooks/post-merge`（マージ後に自動再適用）
++- justエイリアス: ルート/`codex-rs` の `justfile` に `cot-status` / `cot-on` / `cot-off`
++
++## 現在の主なパッチ
++
++1) CoT（thinking）可視化ストリーミング強化
++
++- 目的: エージェントの推論デルタ（reasoning）を「標準ビュー」にライブ表示し、作業中の手がかりを即時に見える化する。
++- 主な変更点:
++  - `codex-rs/tui/src/chatwidget.rs`
++    - `on_agent_reasoning_delta`: 推論デルタを通常ストリームへ流し込み、見出し（ヘッダ）を抑制して連続表示。ステータスヘッダ更新は継続。
++    - `on_agent_reasoning_final`: 表示用ストリームをセパレータ付きでフラッシュし、全文はトランスクリプトとして履歴に格納。
++  - `codex-rs/tui/src/streaming/controller.rs`
++    - `suppress_header_for_current_stream` を追加し、当該ストリームのみヘッダ描画を抑制可能に。
++  - `codex-rs/tui/src/streaming/mod.rs`
++    - `HeaderEmitter::suppress_for_stream` を追加（ストリーム単位でヘッダ既出扱い）。
++  - スナップショット更新（挙動変化の反映）
++    - `codex-rs/tui/src/chatwidget/snapshots/*`
++    - `codex-rs/tui/tests/fixtures/ideal-binary-response.txt`
++- 効果: 「分析中…」のような思考過程が通常ビューに逐次現れ、ユーザーのフィードバックや割り込み判断がしやすくなる。
++
++2) カスタムプロンプトの引数展開（`/name args` → `{{args}}` 置換）
++
++- 目的: スラッシュコマンド風の入力でカスタムプロンプトに任意の引数を渡し、本文中の `{{args}}` を置換して投入できるようにする。
++- 主な変更点:
++  - 新規: `codex-rs/tui/src/bottom_pane/custom_prompt_args.rs`
++    - `parse_slash_and_args("/foo bar baz") -> ("foo", "bar baz")`
++    - `expand_custom_prompt(...)`（補助）
++  - `codex-rs/tui/src/bottom_pane/chat_composer.rs`
++    - ポップアップ選択時やEnter送信時に、先頭行が `"/name args"` 形式なら該当カスタムプロンプトの `{{args}}` を置換して送信。
++  - `codex-rs/tui/src/bottom_pane/mod.rs`
++    - `mod custom_prompt_args;` を追加しモジュール化。
++- 使い方:
++  - 例: カスタムプロンプト `my-prompt` の本文に `{{args}}` を含めておき、入力欄で `/my-prompt ここが置換される` と打つ。
++  - 送信時に本文の `{{args}}` が `ここが置換される` に差し替わる。
++
++## 運用コマンド（適用/解除/状態確認）
++
++- 状態確認: `just cot-status`
++- 適用（ON）: `just cot-on`
++- 解除（OFF）: `just cot-off`
++- マージ後の自動再適用: `.githooks/post-merge` が `scripts/cot-patch.sh ensure` を実行
++
++メモ: 現在のワークツリーでは `scripts/cot-patch.sh status` 実行時に「[cot] patch is applied ✅」が表示される想定（適用済み）。
++
++## スナップショットテストについて
++
++- UIやテキスト出力が変わるため、TUI周辺のスナップショットが更新対象になります。
++- レビュー/反映の流れ（参考）:
++  - 生成: `cargo test -p codex-tui`
++  - 保留確認: `cargo insta pending-snapshots -p codex-tui`
++  - 個別確認: `cargo insta show -p codex-tui path/to/file.snap.new`
++  - 一括受理（意図的変更のみ）: `cargo insta accept -p codex-tui`
++
++## パッチ更新のヒント
++
++- 上流の変更で `changes.patch` が当たらない場合は、いったん競合を解消してから `just cot-on` を再実行。
++- `changes.patch` を更新したいときの一例（慣れた人向け）:
++  - 上流相当（パッチ非適用状態）とローカルカスタマイズ（適用状態）の差分を `git diff` で再生成して `changes.patch` を差し替える。
++  - チーム運用では「どのブランチとの差分か」を明記して作り直すと安全。
++
++## 参考ファイル一覧
++
++- `changes.patch`
++- `scripts/cot-patch.sh`
++- `.githooks/post-merge`
++- `justfile`, `codex-rs/justfile`
++- ドキュメント: `docs/cot-patch.md`, `mydocs/upstream-merge-and-build-ja.md`
++
+diff --git a/mydocs/prompt-local-override.md b/mydocs/prompt-local-override.md
+new file mode 100644
+index 00000000..301ebd40
+--- /dev/null
++++ b/mydocs/prompt-local-override.md
+@@ -0,0 +1,43 @@
++# ローカルプロンプトの優先読込（そねっち仕様）
++
++このドキュメントは、Codex 実行時に使用されるプロンプトの選択ロジックと、ローカル専用のプロンプト運用方法（そねっち仕様）をまとめたものです。
++
++- 対象バイナリ: `codex`（TUI 起動時）
++- 実装箇所: `codex-rs/core/build.rs`, `codex-rs/core/src/client_common.rs`
++
++## 読み込み優先順位
++次の順でビルド時に埋め込むプロンプトを決定します。
++
++1. リポジトリ内のローカル上書き: `codex-rs/core/prompt.local.md`（存在すれば優先）
++2. デフォルト: `codex-rs/core/prompt.md`
++
++備考: いずれもビルド時にバイナリへ埋め込まれ、実行時にファイル読み込みは行いません。
++
++## 起動時の表示（確認用）
++TUI を起動すると、使用中のプロンプトが履歴先頭に表示されます（リリースビルド時）。
++
++- 例（ローカル上書き）: `Using prompt: /…/codex-rs/core/prompt.local.md`
++- 例（デフォルト）: `Using prompt: codex-rs/core/prompt.md`
++
++デバッグビルドでは表示しません（スナップショットテスト安定のため）。
++
++## おすすめ運用（ローカル専用）
++個人用のプロンプトは Git 管理に載せず、ローカルで完結させるのが安全です（変更反映には再ビルドが必要）。
++
++- 手順（最短）
++  - `cp codex-rs/core/prompt.md codex-rs/core/prompt.local.md`
++  - （任意・手元保護）`git update-index --skip-worktree codex-rs/core/prompt.local.md`
++  - 以降は `prompt.local.md` を編集したら再ビルドで反映されます。
++
++## 旧運用（merge=ours）について
++`.gitattributes` の `codex-rs/core/prompt.md merge=ours` は撤廃済み。ランタイムでのローカル上書きは廃止し、ビルド時選択に統一しました。
++
++## ビルドと実行の例
++- リリースビルド: `cd codex-rs && cargo build -p codex-cli --release`
++- 実行: `./target/release/codex`
++
++## トラブルシュート
++- 起動時に「Using prompt: …」が出ない
++  - デバッグビルドかも: リリースビルドで確認してください。
++  - TUI 経路で起動しているか: `codex` 無引数で TUI が起動します。`codex exec` は TUI を使わないため表示されません。
++  - `prompt.local.md` を変更したら再ビルドが必要です。
+diff --git a/mydocs/prompt-merge-guard.md b/mydocs/prompt-merge-guard.md
+new file mode 100644
+index 00000000..364aeb3b
+--- /dev/null
++++ b/mydocs/prompt-merge-guard.md
+@@ -0,0 +1,58 @@
++# prompt.md の保護運用（merge=ours）とTIPS
++
++このドキュメントは、`codex-rs/core/prompt.md` を上流マージ時に常にローカル（ours）を優先して守るための設定と、運用TIPSをまとめたものです。
++
++## 目的
++
++- 将来の upstream 取り込みで `prompt.md` が意図せず改変されるリスクを回避する。
++- 役立つ更新は手動で確認して取り込む（自動検知は行わない）。
++
++## 今回の対応（このリポで実施済み）
++
++- `.gitattributes` を追加して対象ファイルを ours 固定に設定:
++  - `codex-rs/core/prompt.md merge=ours`
++
++## そねっちが実行した設定（参考）
++
++- マージドライバ定義（1回だけ必要）
++  - リポジトリローカル:
++    - `git config merge.ours.name "Keep ours merge driver"`
++    - `git config merge.ours.driver true`
++
++これにより、該当ファイルはマージ時に自動的に「ローカル側（ours）」が採用されます。
++
++## 手動確認の流れ（ポリシー）
++
++- upstream の変更は自動検知しない。必要時に手動チェックを行う。
++  - `git fetch upstream`
++  - `git diff --name-only upstream/main -- codex-rs/core/prompt.md`
++  - 差分を取り込みたい場合のみ、ピンポイントで取得してレビュー:
++    - `git checkout upstream/main -- codex-rs/core/prompt.md`
++    - 確認後に `git add` → `git commit`
++
++## TIPS（設定と適用状況の確認）
++
++- ours マージドライバの定義が存在するか確認:
++  - `git config --show-origin --get-regexp '^merge\.ours\.'`
++  - ざっくり全ドライバを見る: `git config -l | grep '^merge\..*\.driver'`
++
++- 特定ファイルに `merge=ours` が効いているか確認:
++  - `git check-attr merge -- codex-rs/core/prompt.md`
++  - 期待出力: `codex-rス/core/prompt.md: merge: ours`
++
++- リポ内で `merge=ours` が付与されているファイル一覧:
++  - `git ls-files | xargs -n1 -I{} git check-attr merge -- '{}' | awk -F': ' '$3=="ours" {print $1}' | sort -u`
++
++- 宣言箇所（属性ファイル）を検索:
++  - `rg -n --hidden -g '**/.gitattributes' 'merge=ours'`
++  - 備考: `.git/info/attributes` に書くパターンもある（リポ外ローカル設定）。
++
++## 一時的に upstream 版を取り込みたいとき
++
++- 一時的に ours を無効化する場合は `.gitattributes` の該当行をコメントアウトしてコミット→マージ→元に戻す、でもOK。
++- もしくは前述のコマンドで直接 upstream 版を取り寄せてレビュー＆コミット。
++
++## 注意点（トレードオフ）
++
++- `merge=ours` は静かにローカル勝ちにするため、上流の改善も自動では入らない。必要に応じて手動で差分確認・取り込みを行うこと。
++
+diff --git a/mydocs/upstream-merge-and-build-ja.md b/mydocs/upstream-merge-and-build-ja.md
+new file mode 100644
+index 00000000..bfccd1f6
+--- /dev/null
++++ b/mydocs/upstream-merge-and-build-ja.md
+@@ -0,0 +1,83 @@
++このプロジェクトは git@github.com:openai/codex.git をフォークし、そねっち好みのカスタマイズを加えたものである。
++
++# アップストリーム取り込みとビルド手順（日本語）
++
++このドキュメントは、フォーク（`origin`）に本家（`upstream`）の更新を取り込み、ローカルの CoT パッチ（thinking 可視化）を適用したうえでビルドするまでの手順をまとめたクイックガイドです。
++
++- リモート想定: `origin` = 自分のフォーク, `upstream` = 本家
++- 運用方針: マージ派（rebase は使わない）
++- CoT 表示: パッチ方式で常時表示。マージ後に自動再適用（フック有効時）
++
++## 初回セットアップ（未設定なら）
++
++```bash
++# Git フックをこのリポジトリの .githooks に切り替え
++git config core.hooksPath .githooks
++
++# マージ学習（rerere）を有効化（推奨）
++git config rerere.enabled true
++
++# 実行権限の付与
++chmod +x scripts/cot-patch.sh .githooks/post-merge
++```
++
++## 標準フロー（毎回の実運用）
++
++1) 本家の最新を取得して `main` を更新
++
++```bash
++git fetch upstream
++
++git checkout main
++
++git merge upstream/main
++```
++
++2) 作業ブランチに `main` を取り込む（例: `sonecchi`）
++
++```bash
++git switch sonecchi
++
++# CoT パッチを一時的に外して退避
++just cot-off
++
++git stash push -u -m "temp: cot-off before merge"
++
++# main を取り込み（マージ運用）
++git merge main
++
++# 競合が出たら解消 → ステージング → コミット
++git status
++# ファイルを直して
++# git add <fixed-files>
++# git commit
++```
++
++3) CoT パッチの再適用（ここが重要！）
++
++- フックが有効ならマージ直後に自動再適用されます。状態を確認して、必要なら手動で ON にします。
++
++```bash
++# 状態確認
++just cot-status
++
++# 未適用なら再適用（← ここがビルドの“前”）
++just cot-on
++```
++
++4) ビルド（`codex-rs` 配下で CLI をリリースビルド）
++
++```bash
++cd codex-rs/
++cargo build -p codex-cli --release
++```
++
++## 補足・運用メモ
++
++- stash 運用: 上の `stash` は一時退避用。基本は `pop` せず様子見し、問題なければ `git stash drop` で掃除。
++- うまく当たらないとき: `just cot-off && just cot-on` の順で再試行。パッチ競合は解消してから再実行。
++- 競合の把握: `git status` と `git diff --name-only --diff-filter=U` を併用すると把握が早いです。
++
++## 関連ドキュメント
++
++- `docs/cot-patch.md`: CoT パッチ（適用/解除/状態確認）
+diff --git a/mydocs/worklog-2025-09-04.md b/mydocs/worklog-2025-09-04.md
+new file mode 100644
+index 00000000..6c34e0b5
+--- /dev/null
++++ b/mydocs/worklog-2025-09-04.md
+@@ -0,0 +1,41 @@
++# 2025-09-04 作業メモ
++
++## 概要
++- 上流取り込み運用とローカルカスタマイズの保全を強化（prompt.md保護、パッチ可視化の整理）。
++- ドキュメント整備とガード設定を中心に、使い勝手と事故防止を両立。
++
++## 実施内容
++- プロジェクト管理
++  - `mycodex` をアクティブ化し、不要メモを整理（`cot_patch_workflow`, `style_and_conventions`, `suggested_commands`, `project_overview` を削除）。
++- システムプロンプトの特定
++  - GPT-5 へ渡すシステムプロンプト本体を確認: `codex-rs/core/prompt.md`
++  - 読み込み箇所: `codex-rs/core/src/client_common.rs` の `include_str!("../prompt.md")`
++  - 付加指示: `codex-rs/apply-patch/apply_patch_tool_instructions.md`
++- ドキュメント移動と前書き追記
++  - `docs/upstream-merge-and-build-ja.md` → `mydocs/upstream-merge-and-build-ja.md` に移動
++  - 先頭へ「このプロジェクトはフォーク＋そねっち好みのカスタマイズ」を追記
++- パッチの棚卸しとまとめ
++  - リポ直下 `changes.patch` と `scripts/cot-patch.sh`、`.githooks/post-merge`、`just cot-*` を確認
++  - 主要パッチ2系統を整理して文書化: `mydocs/patches.md`
++    - CoT（thinking）可視化の標準ビューへのストリーミング強化
++    - カスタムプロンプト引数展開（`/name args` → `{{args}}` 置換）
++- prompt.md の上流マージ保護（merge=ours）
++  - `.gitattributes` を追加: `codex-rs/core/prompt.md merge=ours`
++  - 運用とTIPSをドキュメント化: `mydocs/prompt-merge-guard.md`
++  - 参考（そねっち実行）:
++    - `git config merge.ours.name "Keep ours merge driver"`
++    - `git config merge.ours.driver true`
++
++## 変更ファイル
++- 追加: `.gitattributes`
++- 追加: `mydocs/patches.md`
++- 追加: `mydocs/prompt-merge-guard.md`
++- 移動＋追記: `mydocs/upstream-merge-and-build-ja.md`
++
++## 次アクション（任意）
++- 上流の prompt 変更チェックは手動方針:
++  - `git fetch upstream` → `git diff --name-only upstream/main -- codex-rs/core/prompt.md`
++- README から `mydocs/` ドキュメントへのリンク追加（必要なら）
++
++---
++相棒メモ: 今日は“事故らない仕組み”がガッツリ固まった👍 次回は気になるところがあれば README の導線整備いこうぜ！
+diff --git a/mydocs/worklog-2025-09-06.md b/mydocs/worklog-2025-09-06.md
+new file mode 100644
+index 00000000..303bd828
+--- /dev/null
++++ b/mydocs/worklog-2025-09-06.md
+@@ -0,0 +1,47 @@
++# 2025-09-06 作業メモ
++
++## 概要
++- main を upstream/main に完全同期する方針を整理し、実際の一致を確認。
++- システムプロンプト `codex-rs/core/prompt.md` の差分を精査し、保護運用の確認。
++- パッチ再適用フックが sonecchi ブランチ専用で動作していることを確認。
++- タグ運用（作成/削除/再汚染防止）を統合ドキュメントに集約。
++
++## 実施内容
++- プロジェクト管理
++  - `mycodex` をアクティブ化し、作業を開始。
++
++- システムプロンプトの特定と差分確認
++  - 対象: `codex-rs/core/prompt.md`
++  - 参照元: `codex-rs/core/src/client_common.rs` の `include_str!("../prompt.md")`
++  - upstream との差分確認: 先頭付近の「AGENTS.md spec」ブロックが upstream 側で存在、ローカルでは除去。Bullets セクションにローカル追加（"Bold the keyword, then colon + concise description.").
++
++- アップストリーム取り込み運用
++  - 標準フローを再確認（`mydocs/upstream-merge-and-build-ja.md`）。
++  - main を上流と完全一致させる手順をメモ化（`mydocs/main-sync-upstream.md`）。
++  - 同期結果の確認: `git rev-parse upstream/main` と `git rev-parse main` の SHA が一致（`ba9620a...`）。
++
++- パッチ適用のブランチ限定化の確認
++  - sonecchi ブランチのみ: `.githooks/post-merge` + `scripts/cot-patch.sh` + `changes.patch` + `.gitattributes (prompt.md merge=ours)` が存在。
++  - main / upstream にはこれらが存在しないため、パッチは走らずピュアなミラーを維持。
++
++- タグ運用（削除/再汚染防止/ガイド統合）
++  - ローカルの全タグ削除を実施（ユーザー側）→ `git tag -l` で空を確認。
++  - リモート origin のタグも空を確認：`git ls-remote --tags origin`（空）。
++  - 上流タグの再汚染防止の設定方針をメモ化（`remote.upstream.tagOpt --no-tags`）。
++  - タグ作成〜削除〜戻し方までを統合ドキュメント化（`mydocs/git-tags-guide.md`）。
++
++## 変更ファイル
++- 追加: `mydocs/main-sync-upstream.md`
++- 追加: `mydocs/git-tags-guide.md`
++- 追加: `mydocs/worklog-2025-09-06.md`（本ファイル）
++- 削除: `mydocs/tag-cleanup-and-no-upstream-tags.md`（統合に伴い削除）
++
++## 次アクション（任意）
++- ブランチガードの明示化: `.githooks/post-merge` に `branch=$(git rev-parse --abbrev-ref HEAD); [ "$branch" = "sonecchi" ] || exit 0` を入れて誤作動を更に予防。
++- origin/main の完全一致チェックと同期: `git rev-parse origin/main` が同一でなければ `git push origin main --force-with-lease`。
++- upstream の prompt 変更を取り込みたい場合は手動で検討: `git checkout upstream/main -- codex-rs/core/prompt.md` → レビュー → `git commit`。
++- 上流タグの再汚染防止の適用確認: `git config --get-all remote.upstream.tagOpt` が `--no-tags` を返すか確認。
++
++---
++相棒メモ: いい流れだぜ！main はピカピカのミラー、カスタムは sonecchi で安全運用。タグ周りもクリーン化完了でスッキリだな😎🧹 次回はブランチガードを入れて鉄壁に仕上げようぜ💪🔥
++
+diff --git a/scripts/cot-patch.sh b/scripts/cot-patch.sh
+new file mode 100755
+index 00000000..474c3995
+--- /dev/null
++++ b/scripts/cot-patch.sh
+@@ -0,0 +1,73 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
++PATCH_FILE="$repo_root/changes.patch"
++
++has_patch() {
++  [[ -f "$PATCH_FILE" ]]
++}
++
++is_applied() {
++  # If reverse applies cleanly, patch is currently applied
++  git -C "$repo_root" apply -R --check "$PATCH_FILE" >/dev/null 2>&1
++}
++
++can_apply() {
++  git -C "$repo_root" apply --check "$PATCH_FILE" >/dev/null 2>&1
++}
++
++cmd=${1:-status}
++
++if ! has_patch; then
++  echo "[cot] $PATCH_FILE not found at repo root." >&2
++  exit 1
++fi
++
++case "$cmd" in
++  status)
++    if is_applied; then
++      echo "[cot] patch is applied ✅"
++    else
++      echo "[cot] patch is NOT applied ❌"
++    fi
++    ;;
++  on)
++    if is_applied; then
++      echo "[cot] already applied ✅"
++      exit 0
++    fi
++    if can_apply; then
++      git -C "$repo_root" apply "$PATCH_FILE"
++      echo "[cot] applied patch ✅"
++    else
++      echo "[cot] patch cannot be applied cleanly. Resolve conflicts then retry." >&2
++      exit 2
++    fi
++    ;;
++  off)
++    if is_applied; then
++      git -C "$repo_root" apply -R "$PATCH_FILE"
++      echo "[cot] reverted patch 🔄"
++    else
++      echo "[cot] already not applied ✅"
++    fi
++    ;;
++  ensure)
++    if is_applied; then
++      echo "[cot] already applied ✅"
++      exit 0
++    fi
++    if can_apply; then
++      git -C "$repo_root" apply "$PATCH_FILE"
++      echo "[cot] applied patch after merge ✅"
++    else
++      echo "[cot] patch cannot be applied cleanly after merge. Please rebase/resolve." >&2
++      exit 2
++    fi
++    ;;
++  *)
++    echo "Usage: $0 {status|on|off|ensure}" >&2
++    exit 64
++    ;;
++esac

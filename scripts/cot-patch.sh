@@ -2,69 +2,91 @@
 set -euo pipefail
 
 repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-PATCH_FILE="$repo_root/changes.patch"
 
-has_patch() {
-  [[ -f "$PATCH_FILE" ]]
+# Support multiple patch files. Order matters when applying.
+PATCH_FILES=(
+  "$repo_root/changes.patch"
+  "$repo_root/prompt-build.patch"
+)
+
+has_any_patch() {
+  local any=false
+  for p in "${PATCH_FILES[@]}"; do
+    if [[ -f "$p" ]]; then any=true; fi
+  done
+  $any
 }
 
 is_applied() {
-  # If reverse applies cleanly, patch is currently applied
-  git -C "$repo_root" apply -R --check "$PATCH_FILE" >/dev/null 2>&1
+  local p="$1"
+  git -C "$repo_root" apply -R --check "$p" >/dev/null 2>&1
 }
 
 can_apply() {
-  git -C "$repo_root" apply --check "$PATCH_FILE" >/dev/null 2>&1
+  local p="$1"
+  git -C "$repo_root" apply --check "$p" >/dev/null 2>&1
 }
 
 cmd=${1:-status}
 
-if ! has_patch; then
-  echo "[cot] $PATCH_FILE not found at repo root." >&2
+if ! has_any_patch; then
+  echo "[cot] no patch files found (changes.patch / prompt-build.patch)" >&2
   exit 1
 fi
 
 case "$cmd" in
   status)
-    if is_applied; then
-      echo "[cot] patch is applied ✅"
-    else
-      echo "[cot] patch is NOT applied ❌"
-    fi
+    for p in "${PATCH_FILES[@]}"; do
+      [[ -f "$p" ]] || continue
+      if is_applied "$p"; then
+        echo "[cot] $(basename "$p") is applied ✅"
+      else
+        echo "[cot] $(basename "$p") is NOT applied ❌"
+      fi
+    done
     ;;
   on)
-    if is_applied; then
-      echo "[cot] already applied ✅"
-      exit 0
-    fi
-    if can_apply; then
-      git -C "$repo_root" apply "$PATCH_FILE"
-      echo "[cot] applied patch ✅"
-    else
-      echo "[cot] patch cannot be applied cleanly. Resolve conflicts then retry." >&2
-      exit 2
-    fi
+    for p in "${PATCH_FILES[@]}"; do
+      [[ -f "$p" ]] || continue
+      if is_applied "$p"; then
+        echo "[cot] $(basename "$p") already applied ✅"
+        continue
+      fi
+      if can_apply "$p"; then
+        git -C "$repo_root" apply "$p"
+        echo "[cot] applied $(basename "$p") ✅"
+      else
+        echo "[cot] $(basename "$p") cannot be applied cleanly. Resolve conflicts then retry." >&2
+        exit 2
+      fi
+    done
     ;;
   off)
-    if is_applied; then
-      git -C "$repo_root" apply -R "$PATCH_FILE"
-      echo "[cot] reverted patch 🔄"
-    else
-      echo "[cot] already not applied ✅"
-    fi
+    for p in "${PATCH_FILES[@]}"; do
+      [[ -f "$p" ]] || continue
+      if is_applied "$p"; then
+        git -C "$repo_root" apply -R "$p"
+        echo "[cot] reverted $(basename "$p") 🔄"
+      else
+        echo "[cot] $(basename "$p") already not applied ✅"
+      fi
+    done
     ;;
   ensure)
-    if is_applied; then
-      echo "[cot] already applied ✅"
-      exit 0
-    fi
-    if can_apply; then
-      git -C "$repo_root" apply "$PATCH_FILE"
-      echo "[cot] applied patch after merge ✅"
-    else
-      echo "[cot] patch cannot be applied cleanly after merge. Please rebase/resolve." >&2
-      exit 2
-    fi
+    for p in "${PATCH_FILES[@]}"; do
+      [[ -f "$p" ]] || continue
+      if is_applied "$p"; then
+        echo "[cot] $(basename "$p") already applied ✅"
+        continue
+      fi
+      if can_apply "$p"; then
+        git -C "$repo_root" apply "$p"
+        echo "[cot] applied $(basename "$p") after merge ✅"
+      else
+        echo "[cot] $(basename "$p") cannot be applied cleanly after merge. Please rebase/resolve." >&2
+        exit 2
+      fi
+    done
     ;;
   *)
     echo "Usage: $0 {status|on|off|ensure}" >&2

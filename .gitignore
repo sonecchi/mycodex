@@ -85,6 +85,7 @@ CHANGELOG.ignore.md
 # local develop
 /.serena/
 /myscripts/
+/mydocs/
 
 serena.html*
 AGENTS.md

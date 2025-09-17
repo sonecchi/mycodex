@@ -610,6 +610,10 @@ impl Session {
             warn!("Overwriting existing pending approval for sub_id: {event_id}");
         }
 
+        let notify_command = command.clone();
+        let notify_reason = reason.clone();
+        let notify_cwd = cwd.clone();
+
         let event = Event {
             id: event_id,
             msg: EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
@@ -620,6 +624,11 @@ impl Session {
             }),
         };
         self.send_event(event).await;
+        self.maybe_notify(UserNotification::ExecApprovalRequested {
+            command: notify_command,
+            cwd: notify_cwd,
+            reason: notify_reason,
+        });
         rx_approve
     }
 
@@ -642,6 +651,10 @@ impl Session {
             warn!("Overwriting existing pending approval for sub_id: {event_id}");
         }
 
+        let notify_reason = reason.clone();
+        let notify_grant_root = grant_root.clone();
+        let changes_count = action.changes().len();
+
         let event = Event {
             id: event_id,
             msg: EventMsg::ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent {
@@ -652,6 +665,11 @@ impl Session {
             }),
         };
         self.send_event(event).await;
+        self.maybe_notify(UserNotification::ApplyPatchApprovalRequested {
+            changes_count,
+            reason: notify_reason,
+            grant_root: notify_grant_root,
+        });
         rx_approve
     }
 

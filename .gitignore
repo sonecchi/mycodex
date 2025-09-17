@@ -81,3 +81,15 @@ CHANGELOG.ignore.md
 # nix related
 .direnv
 .envrc
+
+
+# Local AI Development
+/.claude/
+/.serena/
+/mydocs/
+/myscripts/
+
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+

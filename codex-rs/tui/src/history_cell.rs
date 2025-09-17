@@ -624,6 +624,7 @@ pub(crate) fn new_session_info(
             reasoning_effort,
             config.cwd.clone(),
             crate::version::CODEX_CLI_VERSION,
+            config.model_family.reasoning_summary_format.clone(),
         );
 
         // Help lines below the header (new copy and list)
@@ -703,6 +704,7 @@ struct SessionHeaderHistoryCell {
     model: String,
     reasoning_effort: Option<ReasoningEffortConfig>,
     directory: PathBuf,
+    reasoning_summary_format: ReasoningSummaryFormat,
 }
 
 impl SessionHeaderHistoryCell {
@@ -711,12 +713,14 @@ impl SessionHeaderHistoryCell {
         reasoning_effort: Option<ReasoningEffortConfig>,
         directory: PathBuf,
         version: &'static str,
+        reasoning_summary_format: ReasoningSummaryFormat,
     ) -> Self {
         Self {
             version,
             model,
             reasoning_effort,
             directory,
+            reasoning_summary_format,
         }
     }
 
@@ -754,6 +758,13 @@ impl SessionHeaderHistoryCell {
             ReasoningEffortConfig::Medium => "medium",
             ReasoningEffortConfig::High => "high",
         })
+    }
+
+    fn reasoning_summary_format_label(&self) -> &'static str {
+        match self.reasoning_summary_format {
+            ReasoningSummaryFormat::None => "none",
+            ReasoningSummaryFormat::Experimental => "experimental",
+        }
     }
 }
 
@@ -802,6 +813,7 @@ impl HistoryCell for SessionHeaderHistoryCell {
         const CHANGE_MODEL_HINT_COMMAND: &str = "/model";
         const CHANGE_MODEL_HINT_EXPLANATION: &str = " to change";
         const DIR_LABEL: &str = "directory:";
+        const SUMMARY_LABEL: &str = "summary:";
         let label_width = DIR_LABEL.len();
         let model_label = format!(
             "{model_label:<label_width$}",
@@ -856,6 +868,25 @@ impl HistoryCell for SessionHeaderHistoryCell {
         }
         spans.push(Span::from("│").dim());
         out.push(Line::from(spans));
+
+        // Reasoning summary format line
+        let summary_label = format!("{SUMMARY_LABEL:<label_width$}");
+        let summary_value = self.reasoning_summary_format_label();
+        let summary_text = format!(" {summary_label} {summary_value}");
+        let summary_w = UnicodeWidthStr::width(summary_text.as_str());
+        let summary_pad_w = inner_width.saturating_sub(summary_w);
+        let mut summary_spans: Vec<Span<'static>> = vec![
+            Span::from("│").dim(),
+            Span::from(" ").dim(),
+            Span::from(summary_label).dim(),
+            Span::from(" ").dim(),
+            Span::from(summary_value),
+        ];
+        if summary_pad_w > 0 {
+            summary_spans.push(Span::from(" ".repeat(summary_pad_w)).dim());
+        }
+        summary_spans.push(Span::from("│").dim());
+        out.push(Line::from(summary_spans));
 
         // Bottom border
         let bottom = format!("╰{}╯", "─".repeat(inner_width));
@@ -1591,16 +1622,23 @@ mod tests {
             Some(ReasoningEffortConfig::High),
             std::env::temp_dir(),
             "test",
+            ReasoningSummaryFormat::Experimental,
         );
 
         let lines = render_lines(&cell.display_lines(80));
         let model_line = lines
-            .into_iter()
+            .iter()
             .find(|line| line.contains("model:"))
             .expect("model line");
 
         assert!(model_line.contains("gpt-4o high"));
         assert!(model_line.contains("/model to change"));
+
+        let summary_line = lines
+            .iter()
+            .find(|line| line.contains("summary:"))
+            .expect("summary line");
+        assert!(summary_line.contains("experimental"));
     }
 
     #[test]

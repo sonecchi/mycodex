@@ -50,6 +50,7 @@ pub fn default_bg() -> Option<(u8, u8, u8)> {
 #[cfg(all(unix, not(test)))]
 mod imp {
     use super::DefaultColors;
+    use std::env;
     use std::sync::Mutex;
     use std::sync::OnceLock;
 
@@ -88,19 +89,35 @@ mod imp {
         CACHE.get_or_init(|| Mutex::new(Cache::default()))
     }
 
+    fn probe_disabled() -> bool {
+        matches!(
+            env::var("CODEX_TUI_DISABLE_COLOR_PROBE").as_deref(),
+            Ok("1") | Ok("true") | Ok("TRUE") | Ok("True")
+        )
+    }
+
     pub(super) fn default_colors() -> Option<DefaultColors> {
+        if probe_disabled() {
+            return None;
+        }
         let cache = default_colors_cache();
         let mut cache = cache.lock().ok()?;
         cache.get_or_init_with(|| query_default_colors().unwrap_or_default())
     }
 
     pub(super) fn requery_default_colors() {
+        if probe_disabled() {
+            return;
+        }
         if let Ok(mut cache) = default_colors_cache().lock() {
             cache.refresh_with(|| query_default_colors().unwrap_or_default());
         }
     }
 
     fn query_default_colors() -> std::io::Result<Option<DefaultColors>> {
+        if probe_disabled() {
+            return Ok(None);
+        }
         use std::fs::OpenOptions;
         use std::io::ErrorKind;
         use std::io::IsTerminal;

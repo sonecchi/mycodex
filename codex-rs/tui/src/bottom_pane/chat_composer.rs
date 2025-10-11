@@ -245,6 +245,12 @@ impl ChatComposer {
     }
 
     pub fn handle_paste(&mut self, pasted: String) -> bool {
+        // Some terminals (e.g., VTE-based under specific settings) may surface
+        // OSC 10/11 color replies as paste text. Filter those out to avoid
+        // leaking sequences like "10;rgb:....11;rgb:..." into the composer.
+        if looks_like_osc_color_reply(&pasted) {
+            return false;
+        }
         let char_count = pasted.chars().count();
         if char_count > LARGE_PASTE_CHAR_THRESHOLD {
             let placeholder = format!("[Pasted Content {char_count} chars]");
@@ -1481,6 +1487,45 @@ impl ChatComposer {
             self.footer_mode = reset_mode_after_activity(self.footer_mode);
         }
     }
+}
+
+// Heuristic detector for OSC 10/11 color reply payloads that arrive as text.
+fn looks_like_osc_color_reply(s: &str) -> bool {
+    let t = s.trim();
+    // Keep it narrow: must contain at least one of the signatures
+    if !(t.contains("10;rgb:") || t.contains("11;rgb:")) {
+        return false;
+    }
+
+    // Drop optional leading ']' if terminal kept it
+    let t = t.strip_prefix(']').unwrap_or(t);
+
+    // Quick length guard: typical payloads are short; reject very long inputs
+    if t.len() > 120 {
+        return false;
+    }
+
+    // Remove the known prefixes so we can validate the remainder contains
+    // only hex and '/'. We allow sequences where 10;rgb and 11;rgb appear
+    // back-to-back with no delimiter (observed in the wild).
+    let mut remainder = t.replace("10;rgb:", "");
+    remainder = remainder.replace("11;rgb:", "");
+
+    // Must contain at least two slashes overall (one per color component)
+    if remainder.matches('/').count() < 2 {
+        return false;
+    }
+
+    // All remaining chars should be hex digits or '/'
+    if !remainder
+        .chars()
+        .all(|c| c.is_ascii_hexdigit() || c == '/' || c.is_whitespace())
+    {
+        return false;
+    }
+
+    // Looks like an OSC color reply payload; treat as noise
+    true
 }
 
 impl WidgetRef for ChatComposer {

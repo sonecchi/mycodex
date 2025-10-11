@@ -386,8 +386,10 @@ pub(crate) fn new_session_info(
         let header = SessionHeaderHistoryCell::new(
             model,
             reasoning_effort,
+            config.model_family.reasoning_summary_format.clone(),
             config.cwd.clone(),
             crate::version::CODEX_CLI_VERSION,
+            config.project_doc_max_bytes,
         );
 
         // Help lines below the header (new copy and list)
@@ -456,21 +458,27 @@ struct SessionHeaderHistoryCell {
     version: &'static str,
     model: String,
     reasoning_effort: Option<ReasoningEffortConfig>,
+    reasoning_summary_format: ReasoningSummaryFormat,
     directory: PathBuf,
+    project_doc_max_bytes: usize,
 }
 
 impl SessionHeaderHistoryCell {
     fn new(
         model: String,
         reasoning_effort: Option<ReasoningEffortConfig>,
+        reasoning_summary_format: ReasoningSummaryFormat,
         directory: PathBuf,
         version: &'static str,
+        project_doc_max_bytes: usize,
     ) -> Self {
         Self {
             version,
             model,
             reasoning_effort,
+            reasoning_summary_format,
             directory,
+            project_doc_max_bytes,
         }
     }
 
@@ -530,6 +538,8 @@ impl HistoryCell for SessionHeaderHistoryCell {
         const CHANGE_MODEL_HINT_COMMAND: &str = "/model";
         const CHANGE_MODEL_HINT_EXPLANATION: &str = " to change";
         const DIR_LABEL: &str = "directory:";
+        const SUMMARY_LABEL: &str = "summary:";
+        const DOC_BUDGET_LABEL: &str = "project_doc_max_bytes:";
         let label_width = DIR_LABEL.len();
         let model_label = format!(
             "{model_label:<label_width$}",
@@ -556,11 +566,41 @@ impl HistoryCell for SessionHeaderHistoryCell {
         let dir = self.format_directory(Some(dir_max_width));
         let dir_spans = vec![Span::from(dir_prefix).dim(), Span::from(dir)];
 
+        // Summary format line (e.g., "experimental" or "none")
+        let summary_value = match self.reasoning_summary_format {
+            ReasoningSummaryFormat::Experimental => "experimental",
+            ReasoningSummaryFormat::None => "none",
+        };
+        let summary_label = format!("{SUMMARY_LABEL:<label_width$}");
+        let summary_spans = vec![
+            Span::from(format!("{summary_label} ")).dim(),
+            Span::from(summary_value),
+        ];
+
+        // Project doc budget line (requested placement: below summary)
+        let doc_budget_label = format!("{DOC_BUDGET_LABEL:<label_width$}");
+        let kb_value = self.project_doc_max_bytes as f64 / 1024.0;
+        let kb_str = if (kb_value - kb_value.round()).abs() < 0.05 {
+            format!(
+                "{} ({} KB)",
+                self.project_doc_max_bytes,
+                kb_value.round() as u64
+            )
+        } else {
+            format!("{} ({:.1} KB)", self.project_doc_max_bytes, kb_value)
+        };
+        let doc_budget_spans = vec![
+            Span::from(format!("{doc_budget_label} ")).dim(),
+            Span::from(kb_str),
+        ];
+
         let lines = vec![
             make_row(title_spans),
             make_row(Vec::new()),
             make_row(model_spans),
             make_row(dir_spans),
+            make_row(summary_spans),
+            make_row(doc_budget_spans),
         ];
 
         with_border(lines)
@@ -1394,8 +1434,10 @@ mod tests {
         let cell = SessionHeaderHistoryCell::new(
             "gpt-4o".to_string(),
             Some(ReasoningEffortConfig::High),
+            ReasoningSummaryFormat::None,
             std::env::temp_dir(),
             "test",
+            32 * 1024,
         );
 
         let lines = render_lines(&cell.display_lines(80));
@@ -1406,6 +1448,26 @@ mod tests {
 
         assert!(model_line.contains("gpt-4o high"));
         assert!(model_line.contains("/model to change"));
+    }
+
+    #[test]
+    fn session_header_includes_reasoning_summary_format() {
+        let cell = SessionHeaderHistoryCell::new(
+            "gpt-5-codex".to_string(),
+            Some(ReasoningEffortConfig::High),
+            ReasoningSummaryFormat::Experimental,
+            std::env::temp_dir(),
+            "test",
+            32 * 1024,
+        );
+
+        let lines = render_lines(&cell.display_lines(120));
+        // ensure a line like "summary:   experimental" is present
+        let summary_line = lines
+            .into_iter()
+            .find(|line| line.contains("summary:"))
+            .expect("summary line");
+        assert!(summary_line.contains("experimental"));
     }
 
     #[test]

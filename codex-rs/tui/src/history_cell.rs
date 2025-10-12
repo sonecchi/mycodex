@@ -23,6 +23,7 @@ use codex_core::config_types::ReasoningSummaryFormat;
 use codex_core::protocol::FileChange;
 use codex_core::protocol::McpAuthStatus;
 use codex_core::protocol::McpInvocation;
+use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol::SessionConfiguredEvent;
 use codex_core::protocol_config_types::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::plan_tool::PlanItemArg;
@@ -389,6 +390,8 @@ pub(crate) fn new_session_info(
             config.model_family.reasoning_summary_format.clone(),
             config.cwd.clone(),
             crate::version::CODEX_CLI_VERSION,
+            config.sandbox_policy.clone(),
+            config.approval_policy,
             config.project_doc_max_bytes,
         );
 
@@ -460,6 +463,8 @@ struct SessionHeaderHistoryCell {
     reasoning_effort: Option<ReasoningEffortConfig>,
     reasoning_summary_format: ReasoningSummaryFormat,
     directory: PathBuf,
+    sandbox_policy: SandboxPolicy,
+    approval: codex_core::protocol::AskForApproval,
     project_doc_max_bytes: usize,
 }
 
@@ -470,6 +475,8 @@ impl SessionHeaderHistoryCell {
         reasoning_summary_format: ReasoningSummaryFormat,
         directory: PathBuf,
         version: &'static str,
+        sandbox_policy: SandboxPolicy,
+        approval: codex_core::protocol::AskForApproval,
         project_doc_max_bytes: usize,
     ) -> Self {
         Self {
@@ -478,6 +485,8 @@ impl SessionHeaderHistoryCell {
             reasoning_effort,
             reasoning_summary_format,
             directory,
+            sandbox_policy,
+            approval,
             project_doc_max_bytes,
         }
     }
@@ -538,8 +547,11 @@ impl HistoryCell for SessionHeaderHistoryCell {
         const CHANGE_MODEL_HINT_COMMAND: &str = "/model";
         const CHANGE_MODEL_HINT_EXPLANATION: &str = " to change";
         const DIR_LABEL: &str = "directory:";
+        const SANDBOX_LABEL: &str = "sandbox:";
+        const NETWORK_LABEL: &str = "network:";
         const SUMMARY_LABEL: &str = "summary:";
         const DOC_BUDGET_LABEL: &str = "project_doc_max_bytes:";
+        const APPROVAL_LABEL: &str = "approval:";
         let label_width = DIR_LABEL.len();
         let model_label = format!(
             "{model_label:<label_width$}",
@@ -565,6 +577,37 @@ impl HistoryCell for SessionHeaderHistoryCell {
         let dir_max_width = inner_width.saturating_sub(dir_prefix_width);
         let dir = self.format_directory(Some(dir_max_width));
         let dir_spans = vec![Span::from(dir_prefix).dim(), Span::from(dir)];
+
+        // Sandbox line (e.g., "workspace-write" / "read-only" / "danger-full-access")
+        let sandbox_label = format!("{SANDBOX_LABEL:<label_width$}");
+        let sandbox_text = match &self.sandbox_policy {
+            SandboxPolicy::DangerFullAccess => "danger-full-access".to_string(),
+            SandboxPolicy::ReadOnly => "read-only".to_string(),
+            SandboxPolicy::WorkspaceWrite { .. } => "workspace-write".to_string(),
+        };
+        let sandbox_spans = vec![
+            Span::from(format!("{sandbox_label} ")).dim(),
+            Span::from(sandbox_text),
+        ];
+
+        // Network access line (enabled/restricted)
+        let network_label = format!("{NETWORK_LABEL:<label_width$}");
+        let network_value = if self.sandbox_policy.has_full_network_access() {
+            "enabled"
+        } else {
+            "restricted"
+        };
+        let network_spans = vec![
+            Span::from(format!("{network_label} ")).dim(),
+            Span::from(network_value),
+        ];
+
+        // Approval line (e.g., "never", "on-request")
+        let approval_label = format!("{APPROVAL_LABEL:<label_width$}");
+        let approval_spans = vec![
+            Span::from(format!("{approval_label} ")).dim(),
+            Span::from(self.approval.to_string()),
+        ];
 
         // Summary format line (e.g., "experimental" or "none")
         let summary_value = match self.reasoning_summary_format {
@@ -599,6 +642,9 @@ impl HistoryCell for SessionHeaderHistoryCell {
             make_row(Vec::new()),
             make_row(model_spans),
             make_row(dir_spans),
+            make_row(sandbox_spans),
+            make_row(network_spans),
+            make_row(approval_spans),
             make_row(summary_spans),
             make_row(doc_budget_spans),
         ];
@@ -1437,6 +1483,8 @@ mod tests {
             ReasoningSummaryFormat::None,
             std::env::temp_dir(),
             "test",
+            SandboxPolicy::ReadOnly,
+            codex_core::protocol::AskForApproval::Never,
             32 * 1024,
         );
 
@@ -1458,6 +1506,13 @@ mod tests {
             ReasoningSummaryFormat::Experimental,
             std::env::temp_dir(),
             "test",
+            SandboxPolicy::WorkspaceWrite {
+                writable_roots: vec![],
+                network_access: false,
+                exclude_tmpdir_env_var: false,
+                exclude_slash_tmp: false,
+            },
+            codex_core::protocol::AskForApproval::OnRequest,
             32 * 1024,
         );
 

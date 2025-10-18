@@ -26,6 +26,7 @@ use codex_core::protocol::McpInvocation;
 use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol::SessionConfiguredEvent;
 use codex_core::protocol_config_types::ReasoningEffort as ReasoningEffortConfig;
+use codex_protocol::num_format::format_with_separators;
 use codex_protocol::plan_tool::PlanItemArg;
 use codex_protocol::plan_tool::StepStatus;
 use codex_protocol::plan_tool::UpdatePlanArgs;
@@ -393,6 +394,7 @@ pub(crate) fn new_session_info(
             config.sandbox_policy.clone(),
             config.approval_policy,
             config.project_doc_max_bytes,
+            config.model_auto_compact_token_limit,
         );
 
         // Help lines below the header (new copy and list)
@@ -466,6 +468,7 @@ struct SessionHeaderHistoryCell {
     sandbox_policy: SandboxPolicy,
     approval: codex_core::protocol::AskForApproval,
     project_doc_max_bytes: usize,
+    model_auto_compact_token_limit: Option<i64>,
 }
 
 impl SessionHeaderHistoryCell {
@@ -478,6 +481,7 @@ impl SessionHeaderHistoryCell {
         sandbox_policy: SandboxPolicy,
         approval: codex_core::protocol::AskForApproval,
         project_doc_max_bytes: usize,
+        model_auto_compact_token_limit: Option<i64>,
     ) -> Self {
         Self {
             version,
@@ -488,6 +492,7 @@ impl SessionHeaderHistoryCell {
             sandbox_policy,
             approval,
             project_doc_max_bytes,
+            model_auto_compact_token_limit,
         }
     }
 
@@ -551,6 +556,7 @@ impl HistoryCell for SessionHeaderHistoryCell {
         const NETWORK_LABEL: &str = "network:";
         const SUMMARY_LABEL: &str = "summary:";
         const DOC_BUDGET_LABEL: &str = "project_doc_max_bytes:";
+        const AUTO_COMPACT_LIMIT_LABEL: &str = "model_auto_compact_token_limit:";
         const APPROVAL_LABEL: &str = "approval:";
         let label_width = DIR_LABEL.len();
         let model_label = format!(
@@ -637,6 +643,18 @@ impl HistoryCell for SessionHeaderHistoryCell {
             Span::from(kb_str),
         ];
 
+        // Model auto-compact limit line (requested placement: below project_doc_max_bytes)
+        let auto_compact_label = format!("{AUTO_COMPACT_LIMIT_LABEL:<label_width$}");
+        let auto_compact_value = match self.model_auto_compact_token_limit {
+            Some(v) if v >= 0 => format_with_separators(v as u64),
+            Some(v) => v.to_string(),
+            None => "<default>".to_string(),
+        };
+        let auto_compact_spans = vec![
+            Span::from(format!("{auto_compact_label} ")).dim(),
+            Span::from(auto_compact_value),
+        ];
+
         let lines = vec![
             make_row(title_spans),
             make_row(Vec::new()),
@@ -647,6 +665,7 @@ impl HistoryCell for SessionHeaderHistoryCell {
             make_row(approval_spans),
             make_row(summary_spans),
             make_row(doc_budget_spans),
+            make_row(auto_compact_spans),
         ];
 
         with_border(lines)
@@ -1486,6 +1505,7 @@ mod tests {
             SandboxPolicy::ReadOnly,
             codex_core::protocol::AskForApproval::Never,
             32 * 1024,
+            Some(200_000),
         );
 
         let lines = render_lines(&cell.display_lines(80));
@@ -1514,6 +1534,7 @@ mod tests {
             },
             codex_core::protocol::AskForApproval::OnRequest,
             32 * 1024,
+            Some(200_000),
         );
 
         let lines = render_lines(&cell.display_lines(120));

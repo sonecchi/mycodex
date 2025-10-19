@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""
+Print the latest session's remaining context percentage as a single line:
+
+  NN% context left
+
+How it works:
+- Scans CODEX_HOME (default: ~/.codex)/sessions/**/rollout-*.jsonl
+- Finds the most recently modified rollout file
+- Parses JSONL for the last persisted TokenCount event with info
+- Computes remaining % using the same formula as codex-rs:
+    percent = ((effective_window - used) / effective_window) * 100
+  where:
+    effective_window = model_context_window - 12000 (baseline tokens)
+    used = (last.total_tokens - last.reasoning_output_tokens) - 12000
+
+Exit codes:
+- 0: Printed a result
+- 1: No sessions / rollout files found
+- 2: No TokenCount info found in latest rollout
+- 3: Missing model_context_window; unable to compute
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+from glob import glob
+from pathlib import Path
+
+
+BASELINE_TOKENS = 12000
+
+
+def codex_home() -> Path:
+    p = os.environ.get("CODEX_HOME")
+    if p:
+        return Path(p).expanduser()
+    return Path.home() / ".codex"
+
+
+def find_latest_rollout(home: Path) -> Path | None:
+    session_root = home / "sessions"
+    # Match nested YYYY/MM/DD/rollout-*.jsonl files
+    pattern = str(session_root / "**" / "rollout-*.jsonl")
+    files = glob(pattern, recursive=True)
+    if not files:
+        return None
+    try:
+        return max((Path(f) for f in files), key=lambda p: p.stat().st_mtime)
+    except Exception:
+        return None
+
+
+def iter_jsonl(path: Path):
+    with path.open("r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield json.loads(line)
+            except Exception:
+                # Skip malformed lines
+                continue
+
+
+def last_token_count_with_info(path: Path) -> dict | None:
+    last = None
+    for obj in iter_jsonl(path):
+        # RolloutLine is {"timestamp": ..., "type": <rollout_item_type>, "payload": {...}}
+        if obj.get("type") != "event_msg":
+            continue
+        payload = obj.get("payload") or {}
+        if payload.get("type") != "token_count":
+            continue
+        # We want the entry that includes full info (not just rate limits)
+        if payload.get("info") is not None:
+            last = payload
+    return last
+
+
+def compute_percent_left(info: dict) -> int | None:
+    # model_context_window may be missing ⇒ we can't compute
+    window = info.get("model_context_window")
+    if window is None:
+        return None
+    try:
+        window = int(window)
+    except Exception:
+        return None
+    if window <= BASELINE_TOKENS:
+        return 0
+
+    last = info.get("last_token_usage") or {}
+    total_tokens = int(last.get("total_tokens", 0))
+    reasoning_out = int(last.get("reasoning_output_tokens", 0))
+
+    # Match TokenUsage::tokens_in_context_window() and percent_of_context_window_remaining()
+    tokens_in_context = max(0, total_tokens - reasoning_out)
+    effective_window = window - BASELINE_TOKENS
+    used = max(0, tokens_in_context - BASELINE_TOKENS)
+    remaining = max(0, effective_window - used)
+
+    # Clamp to [0, 100]
+    pct = int(round((remaining / float(effective_window)) * 100.0))
+    return max(0, min(100, pct))
+
+
+def main() -> int:
+    home = codex_home()
+    latest = find_latest_rollout(home)
+    if latest is None or not latest.exists():
+        print("no session rollouts found (CODEX_HOME/sessions)", file=sys.stderr)
+        return 1
+
+    payload = last_token_count_with_info(latest)
+    if payload is None:
+        print("no token usage info found in latest rollout", file=sys.stderr)
+        return 2
+
+    info = payload.get("info") or {}
+    pct = compute_percent_left(info)
+    if pct is None:
+        print("model_context_window unavailable; cannot compute percent left", file=sys.stderr)
+        return 3
+
+    print(f"{pct}% context left")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

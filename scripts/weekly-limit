@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""
+Print the latest session's 5h and Weekly limit usage, e.g.:
+
+  5h limit: 84% used (resets 16:29)
+  Weekly limit: 60% used (resets 12:34 on 25 Oct)
+
+Data source:
+- Parses the most recently modified rollout JSONL under CODEX_HOME (default: ~/.codex)/sessions/**/rollout-*.jsonl
+- Finds the last TokenCount event and reads `rate_limits.primary/secondary`
+- Mirrors TUI formatting (rounded to 0 decimals) and computes the reset time
+  from the event timestamp + `resets_in_seconds` (converted to local time).
+
+Exit codes:
+- 0: Printed a result
+- 1: No sessions / rollout files found
+- 2: No TokenCount events in latest rollout
+- 3: No rate_limits present in last TokenCount
+- 4: Neither primary nor secondary windows present
+- 5: Invalid value types
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+from glob import glob
+from pathlib import Path
+from datetime import datetime, timedelta, timezone
+
+
+def _to_local(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        # Assume UTC if tz-naive
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone()
+
+
+def _parse_rollout_ts(ts: str) -> datetime | None:
+    # Expect e.g. 2025-08-09T15:51:14.294Z
+    try:
+        if ts.endswith("Z"):
+            ts = ts[:-1] + "+00:00"
+        return datetime.fromisoformat(ts)
+    except Exception:
+        return None
+
+
+def _format_reset_timestamp(reset_local: datetime, captured_local: datetime) -> str:
+    time_str = reset_local.strftime("%H:%M")
+    same_day = reset_local.date() == captured_local.date()
+    if same_day:
+        return time_str
+    # Portable day without leading zero
+    try:
+        day_mon = reset_local.strftime("%-d %b")
+    except Exception:
+        day_mon = reset_local.strftime("%d %b").lstrip("0")
+    return f"{time_str} on {day_mon}"
+
+
+def codex_home() -> Path:
+    p = os.environ.get("CODEX_HOME")
+    if p:
+        return Path(p).expanduser()
+    return Path.home() / ".codex"
+
+
+def find_latest_rollout(home: Path) -> Path | None:
+    pattern = str((home / "sessions" / "**" / "rollout-*.jsonl").resolve())
+    files = glob(pattern, recursive=True)
+    if not files:
+        return None
+    try:
+        return max((Path(f) for f in files), key=lambda p: p.stat().st_mtime)
+    except Exception:
+        return None
+
+
+def iter_jsonl(path: Path):
+    with path.open("r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield json.loads(line)
+            except Exception:
+                continue
+
+
+def last_token_count(path: Path) -> tuple[dict, datetime] | tuple[None, None]:
+    last: dict | None = None
+    last_ts: datetime | None = None
+    for obj in iter_jsonl(path):
+        ts_raw = obj.get("timestamp")
+        ev_ts = _parse_rollout_ts(ts_raw) if isinstance(ts_raw, str) else None
+        if obj.get("type") != "event_msg":
+            continue
+        payload = obj.get("payload") or {}
+        if payload.get("type") != "token_count":
+            continue
+        last = payload
+        last_ts = ev_ts
+    return (last, last_ts) if last is not None and last_ts is not None else (None, None)
+
+
+def main() -> int:
+    home = codex_home()
+    latest = find_latest_rollout(home)
+    if latest is None or not latest.exists():
+        print("no session rollouts found (CODEX_HOME/sessions)", file=sys.stderr)
+        return 1
+
+    payload, ev_ts = last_token_count(latest)
+    if payload is None or ev_ts is None:
+        print("no token_count events found in latest rollout", file=sys.stderr)
+        return 2
+
+    rl = payload.get("rate_limits")
+    if rl is None:
+        print("no rate_limits in last token_count event", file=sys.stderr)
+        return 3
+
+    primary = rl.get("primary") if isinstance(rl, dict) else None
+    secondary = rl.get("secondary") if isinstance(rl, dict) else None
+    if not isinstance(primary, dict) and not isinstance(secondary, dict):
+        print("no primary/secondary windows present", file=sys.stderr)
+        return 4
+
+    captured_local = _to_local(ev_ts)
+
+    def line_for(label: str, win: dict | None) -> str | None:
+        if not isinstance(win, dict):
+            return None
+        try:
+            used = float(win.get("used_percent"))
+        except Exception:
+            return None
+        resets_in = win.get("resets_in_seconds")
+        resets_str = None
+        if isinstance(resets_in, (int, float)):
+            reset_local = _to_local(ev_ts + timedelta(seconds=float(resets_in)))
+            resets_str = _format_reset_timestamp(reset_local, captured_local)
+        base = f"{label} limit: {used:.0f}% used"
+        return f"{base} (resets {resets_str})" if resets_str else base
+
+    # Prefer a human label for primary if window_minutes available
+    def label_for_primary(win: dict | None) -> str:
+        if not isinstance(win, dict):
+            return "5h"
+        minutes = win.get("window_minutes")
+        try:
+            m = int(minutes)
+        except Exception:
+            return "5h"
+        # Mirror TUI get_limits_duration for short windows
+        MINUTES_PER_HOUR = 60
+        MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR
+        ROUNDING_BIAS = 3
+        if m <= MINUTES_PER_DAY + ROUNDING_BIAS:
+            hours = max(1, (m + ROUNDING_BIAS) // MINUTES_PER_HOUR)
+            return f"{hours}h"
+        return "5h"
+
+    lines: list[str] = []
+    if isinstance(primary, dict):
+        lines.append(line_for(label_for_primary(primary), primary))
+    if isinstance(secondary, dict):
+        lines.append(line_for("Weekly", secondary))
+
+    # Filter None and print
+    lines = [ln for ln in lines if ln]
+    if not lines:
+        return 5
+    for ln in lines:
+        print(ln)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

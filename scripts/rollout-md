@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+"""
+Codex の rollout-*.jsonl から、
+そねっちが読みやすい Markdown ログを吐き出すスクリプトだぜ 😎
+
+ざっくりやってること:
+- rollout JSONL (1行1イベント) を時系列でなめる
+- user / assistant のメッセージと、
+  ツール呼び出し(function_call)とその結果(function_call_output)だけを拾う
+- それぞれを Markdown のセクション:
+    # そねっち🤔
+    # ツール実行🔧
+    ## 実行結果📤
+    # 俺っち🧠
+  という見出しで並べていく
+
+使い方:
+- 引数なし: CODEX_HOME (~/.codex) 配下から「一番新しい rollout-*.jsonl」を自動で選ぶ
+    scripts/rollout-md
+
+- 特定の JSONL を指定:
+    scripts/rollout-md -i /path/to/rollout-2025-12-27T....jsonl
+
+出力先:
+- 標準出力に Markdown をそのまま吐くので、
+  ファイルにしたければリダイレクトで OK:
+    scripts/rollout-md > session-log.md
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from glob import glob
+from pathlib import Path
+from typing import Iterable
+
+
+def codex_home() -> Path:
+    """CODEX_HOME があればそれを優先、なければ ~/.codex を使う。"""
+    p = os.environ.get("CODEX_HOME")
+    if p:
+        return Path(p).expanduser()
+    return Path.home() / ".codex"
+
+
+def find_latest_rollout(home: Path) -> Path | None:
+    """sessions 配下の rollout-*.jsonl のうち、一番新しいファイルを返す。"""
+    pattern = str((home / "sessions" / "**" / "rollout-*.jsonl").resolve())
+    files = glob(pattern, recursive=True)
+    if not files:
+        return None
+    try:
+        return max((Path(f) for f in files), key=lambda p: p.stat().st_mtime)
+    except Exception:
+        return None
+
+
+def iter_jsonl(path: Path) -> Iterable[dict]:
+    """JSONL ファイルを 1 行ずつ dict として読む簡単ジェネレータ。"""
+    with path.open("r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(obj, dict):
+                yield obj
+
+
+def _parse_timestamp(ts: str | None) -> datetime | None:
+    """rollout の timestamp (例: 2025-12-27T03:40:03.432Z) を datetime に変換。"""
+    if not isinstance(ts, str):
+        return None
+    try:
+        if ts.endswith("Z"):
+            ts = ts[:-1] + "+00:00"
+        return datetime.fromisoformat(ts)
+    except Exception:
+        return None
+
+
+@dataclass
+class MdChunk:
+    ts: datetime | None
+    kind: str  # "user" | "assistant" | "tool_call" | "tool_output"
+    heading: str
+    body: str
+
+
+def _content_to_text(content: list[dict]) -> str:
+    """response_item.payload.content の配列からテキスト部分をいい感じに結合する。"""
+    parts: list[str] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if isinstance(text, str):
+            parts.append(text)
+    return "\n\n".join(parts).rstrip()
+
+
+def _format_tool_call(payload: dict) -> str:
+    """function_call の中身を Markdown 用の文字列に整形する。"""
+    name = payload.get("name") or "unknown_tool"
+    args_raw = payload.get("arguments")
+
+    formatted_args = ""
+    if isinstance(args_raw, str):
+        # JSON っぽければパースを試みて、いい感じに整形してあげる
+        try:
+            parsed = json.loads(args_raw)
+            formatted_args = json.dumps(parsed, ensure_ascii=False, indent=2)
+        except Exception:
+            formatted_args = args_raw
+    elif isinstance(args_raw, dict):
+        formatted_args = json.dumps(args_raw, ensure_ascii=False, indent=2)
+
+    lines = [f"- ツール名: `{name}`"]
+    call_id = payload.get("call_id")
+    if isinstance(call_id, str):
+        lines.append(f"- call_id: `{call_id}`")
+    if formatted_args:
+        lines.append("")
+        lines.append("```json")
+        lines.append(formatted_args)
+        lines.append("```")
+    return "\n".join(lines).rstrip()
+
+
+def _format_tool_output(payload: dict, tool_name: str | None) -> str:
+    """function_call_output の output を Markdown 用文字列に整形する。"""
+    output = payload.get("output")
+    if not isinstance(output, str):
+        return ""
+
+    lines: list[str] = []
+    if tool_name:
+        lines.append(f"- ツール名: `{tool_name}`")
+        lines.append("")
+    lines.append("```text")
+    lines.append(output.rstrip())
+    lines.append("```")
+    return "\n".join(lines).rstrip()
+
+
+def extract_md_chunks(path: Path) -> list[MdChunk]:
+    """
+    rollout-*.jsonl から、Markdown にしたい要素だけを MdChunk のリストとして抜き出す。
+
+    - user メッセージ => # そねっち🤔
+    - assistant メッセージ => # 俺っち🧠
+    - function_call => # ツール実行🔧
+    - function_call_output => ## 実行結果📤
+    """
+    chunks: list[MdChunk] = []
+    # call_id -> tool name を覚えておいて、output 側でもツール名を付けられるようにする
+    tool_names: dict[str, str] = {}
+
+    for obj in iter_jsonl(path):
+        ts = _parse_timestamp(obj.get("timestamp"))
+        if obj.get("type") != "response_item":
+            continue
+        payload = obj.get("payload")
+        if not isinstance(payload, dict):
+            continue
+
+        p_type = payload.get("type")
+        if p_type == "message":
+            role = payload.get("role")
+            content = payload.get("content")
+            if not isinstance(content, list):
+                continue
+            text = _content_to_text(content)
+            if not text:
+                continue
+            if role == "user":
+                chunks.append(
+                    MdChunk(
+                        ts=ts,
+                        kind="user",
+                        heading="# そねっち🤔",
+                        body=text,
+                    )
+                )
+            elif role == "assistant":
+                chunks.append(
+                    MdChunk(
+                        ts=ts,
+                        kind="assistant",
+                        heading="# 俺っち🧠",
+                        body=text,
+                    )
+                )
+        elif p_type == "function_call":
+            call_id = payload.get("call_id")
+            name = payload.get("name")
+            if isinstance(call_id, str) and isinstance(name, str):
+                tool_names[call_id] = name
+            body = _format_tool_call(payload)
+            if not body:
+                continue
+            chunks.append(
+                MdChunk(
+                    ts=ts,
+                    kind="tool_call",
+                    heading="# ツール実行🔧",
+                    body=body,
+                )
+            )
+        elif p_type == "function_call_output":
+            call_id = payload.get("call_id")
+            tool_name = tool_names.get(call_id) if isinstance(call_id, str) else None
+            body = _format_tool_output(payload, tool_name)
+            if not body:
+                continue
+            chunks.append(
+                MdChunk(
+                    ts=ts,
+                    kind="tool_output",
+                    heading="## 実行結果📤",
+                    body=body,
+                )
+            )
+
+    # 念のため timestamp でソート（だいたいファイル順だけど、整えておく）
+    chunks.sort(key=lambda c: (c.ts or datetime.fromtimestamp(0, tz=timezone.utc)))
+    return chunks
+
+
+def render_markdown(chunks: list[MdChunk], source: Path) -> str:
+    """MdChunk のリストを 1 つの Markdown 文字列にまとめる。"""
+    lines: list[str] = []
+
+    # 先頭にちょっとだけメタ情報を付ける
+    lines.append(f"# Codex セッションログ from `{source.name}`")
+    lines.append("")
+    lines.append("> このファイルは `scripts/rollout-md` で生成された Markdown ログだよ。")
+    lines.append("")
+
+    for chunk in chunks:
+        lines.append(chunk.heading)
+        lines.append("")
+        lines.append(chunk.body)
+        lines.append("")
+
+    # 末尾の空行は 1つに揃えておく
+    while lines and not lines[-1].strip():
+        lines.pop()
+    lines.append("")
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Codex rollout-*.jsonl を Markdown ログとして整形して出力するやつ。",
+    )
+    parser.add_argument(
+        "-i",
+        "--input",
+        type=str,
+        help="入力に使う rollout-*.jsonl のパス。省略時は直近のファイルを自動検出する。",
+    )
+
+    args = parser.parse_args(argv)
+
+    if args.input:
+        path = Path(args.input).expanduser()
+    else:
+        home = codex_home()
+        path = find_latest_rollout(home) or Path("")
+
+    if not path or not path.exists():
+        print("rollout JSONL が見つからなかったよ… (CODEX_HOME/sessions を確認してみて)", file=sys.stderr)
+        return 1
+
+    chunks = extract_md_chunks(path)
+    if not chunks:
+        print("Markdown にできるイベントが見つからなかった…", file=sys.stderr)
+        return 2
+
+    md = render_markdown(chunks, path)
+    sys.stdout.write(md)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+

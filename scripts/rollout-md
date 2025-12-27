@@ -21,6 +21,13 @@ Codex の rollout-*.jsonl から、
 - 特定の JSONL を指定:
     scripts/rollout-md -i /path/to/rollout-2025-12-27T....jsonl
 
+- 最近のファイル一覧モード:
+    scripts/rollout-md -n 10
+
+  上位 N 件の rollout-*.jsonl を新しい順に表示して、
+  「どれを .md にする？」のメッセージと、
+  1件目を使ったサンプルコマンド + その結果の Markdown も続けて出力する。
+
 出力先:
 - 標準出力に Markdown をそのまま吐くので、
   ファイルにしたければリダイレクトで OK:
@@ -50,14 +57,20 @@ def codex_home() -> Path:
 
 def find_latest_rollout(home: Path) -> Path | None:
     """sessions 配下の rollout-*.jsonl のうち、一番新しいファイルを返す。"""
-    pattern = str((home / "sessions" / "**" / "rollout-*.jsonl").resolve())
-    files = glob(pattern, recursive=True)
+    files = find_all_rollouts(home)
     if not files:
         return None
     try:
-        return max((Path(f) for f in files), key=lambda p: p.stat().st_mtime)
+        return max(files, key=lambda p: p.stat().st_mtime)
     except Exception:
         return None
+
+
+def find_all_rollouts(home: Path) -> list[Path]:
+    """sessions 配下の rollout-*.jsonl をすべて列挙する。"""
+    pattern = str((home / "sessions" / "**" / "rollout-*.jsonl").resolve())
+    files = glob(pattern, recursive=True)
+    return [Path(f) for f in files]
 
 
 def iter_jsonl(path: Path) -> Iterable[dict]:
@@ -258,6 +271,60 @@ def render_markdown(chunks: list[MdChunk], source: Path) -> str:
     return "\n".join(lines)
 
 
+def list_mode(num: int) -> int:
+    """
+    最近の rollout-*.jsonl を num 件だけ一覧表示して、
+    1件目を使った Markdown 出力のサンプルも見せるモード。
+    """
+    if num <= 0:
+        print("-n には 1 以上を指定してくれよな！", file=sys.stderr)
+        return 1
+
+    home = codex_home()
+    files = find_all_rollouts(home)
+    if not files:
+        print("rollout JSONL が見つからなかったよ… (CODEX_HOME/sessions を確認してみて)", file=sys.stderr)
+        return 1
+
+    # 元の find | sort -r と同じく、「新しいものから順」に並べたいので
+    # 最終更新時刻でソートして上位 num 件だけ出す。
+    try:
+        files_sorted = sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
+    except Exception:
+        files_sorted = files
+
+    target = files_sorted[:num]
+
+    print(f"最近の rollout-*.jsonl 上位 {len(target)} 件 (新しい順):")
+    for idx, p in enumerate(target, start=1):
+        print(f"{idx:2d}: {p}")
+
+    # 一応 1 件もないケースはさっき弾いているが、念のため
+    if not target:
+        return 1
+
+    chosen = target[0]
+    print()
+    print("どれを.mdにする？")
+    sample_cmd = f"scripts/rollout-md -i {chosen} > session-log.md"
+    print(sample_cmd)
+    print()
+
+    # 上記サンプルコマンドを実行したときに出るであろう Markdown もそのまま出力
+    chunks = extract_md_chunks(chosen)
+    if not chunks:
+        print("選んだファイルから Markdown にできるイベントが見つからなかった…", file=sys.stderr)
+        return 2
+
+    md = render_markdown(chunks, chosen)
+    try:
+        sys.stdout.write(md)
+    except BrokenPipeError:
+        # head などでパイプを途中で切られたときも静かに終了
+        return 0
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Codex rollout-*.jsonl を Markdown ログとして整形して出力するやつ。",
@@ -268,8 +335,21 @@ def main(argv: list[str] | None = None) -> int:
         type=str,
         help="入力に使う rollout-*.jsonl のパス。省略時は直近のファイルを自動検出する。",
     )
+    parser.add_argument(
+        "-n",
+        "--num",
+        type=int,
+        help="最近の rollout-*.jsonl を N 件一覧表示して、サンプルの Markdown 出力も併せて表示するモード。",
+    )
 
     args = parser.parse_args(argv)
+
+    # -n が指定されているときは一覧モード。-i と同時指定は分かりづらいので弾く。
+    if args.num is not None:
+        if args.input:
+            print("-n と -i は同時には使えないよ！どちらか片方にしてくれ。", file=sys.stderr)
+            return 1
+        return list_mode(args.num)
 
     if args.input:
         path = Path(args.input).expanduser()
@@ -287,10 +367,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     md = render_markdown(chunks, path)
-    sys.stdout.write(md)
+    try:
+        sys.stdout.write(md)
+    except BrokenPipeError:
+        # head などで途中でパイプを切られた場合も静かに終わる
+        return 0
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

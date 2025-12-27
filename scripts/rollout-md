@@ -327,19 +327,8 @@ def list_mode(num: int) -> int:
     sample_cmd = f"scripts/rollout-md -i {chosen} > session-log.md"
     print(sample_cmd)
     print()
-
-    # 上記サンプルコマンドを実行したときに出るであろう Markdown もそのまま出力
-    chunks = extract_md_chunks(chosen)
-    if not chunks:
-        print("選んだファイルから Markdown にできるイベントが見つからなかった…", file=sys.stderr)
-        return 2
-
-    md = render_markdown(chunks, chosen)
-    try:
-        sys.stdout.write(md)
-    except BrokenPipeError:
-        # head などでパイプを途中で切られたときも静かに終了
-        return 0
+    # -n モードではここまで。実際の .md 出力は、
+    # そねっちが上のサンプルコマンドを叩いたときだけ行う。
     return 0
 
 

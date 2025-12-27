@@ -108,14 +108,13 @@ def _escape_triple_backticks(text: str) -> str:
     開始・終了のペアがずれると全体の表示が崩れることがあるので、
     ログ上では \\``` のように 1 文字だけ逃がしておく作戦。
     """
-    return text.replace("```", "'''")
-    # return text.replace("```", "\\```")
+    return text.replace("```", "\\```")
 
 
 @dataclass
 class MdChunk:
     ts: datetime | None
-    kind: str  # "user" | "assistant" | "tool_call" | "tool_output"
+    kind: str  # "user" | "assistant" | "tool_call" | "tool_output" | "reasoning"
     heading: str
     body: str
 
@@ -124,6 +123,19 @@ def _content_to_text(content: list[dict]) -> str:
     """response_item.payload.content の配列からテキスト部分をいい感じに結合する。"""
     parts: list[str] = []
     for item in content:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if isinstance(text, str):
+            parts.append(text)
+    merged = "\n\n".join(parts).rstrip()
+    return _escape_triple_backticks(merged)
+
+
+def _summary_to_text(summary: list[dict]) -> str:
+    """reasoning.payload.summary の配列からテキストを結合して Markdown 用に整形する。"""
+    parts: list[str] = []
+    for item in summary:
         if not isinstance(item, dict):
             continue
         text = item.get("text")
@@ -226,10 +238,25 @@ def extract_md_chunks(path: Path) -> list[MdChunk]:
                     MdChunk(
                         ts=ts,
                         kind="assistant",
-                        heading="# 俺っち🧠",
+                        heading="# 俺っち🤖",
                         body=text,
                     )
                 )
+        elif p_type == "reasoning":
+            summary = payload.get("summary")
+            if not isinstance(summary, list):
+                continue
+            text = _summary_to_text(summary)
+            if not text:
+                continue
+            chunks.append(
+                MdChunk(
+                    ts=ts,
+                    kind="reasoning",
+                    heading="# 思考🧠",
+                    body=text,
+                )
+            )
         elif p_type == "function_call":
             call_id = payload.get("call_id")
             name = payload.get("name")

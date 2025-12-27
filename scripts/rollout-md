@@ -100,6 +100,18 @@ def _parse_timestamp(ts: str | None) -> datetime | None:
         return None
 
 
+def _escape_triple_backticks(text: str) -> str:
+    """
+    Markdown 全体が壊れないように、素の「```」をエスケープしておく。
+
+    行頭に ``` があるとコードフェンスとして解釈されて、
+    開始・終了のペアがずれると全体の表示が崩れることがあるので、
+    ログ上では \\``` のように 1 文字だけ逃がしておく作戦。
+    """
+    return text.replace("```", "'''")
+    # return text.replace("```", "\\```")
+
+
 @dataclass
 class MdChunk:
     ts: datetime | None
@@ -117,7 +129,8 @@ def _content_to_text(content: list[dict]) -> str:
         text = item.get("text")
         if isinstance(text, str):
             parts.append(text)
-    return "\n\n".join(parts).rstrip()
+    merged = "\n\n".join(parts).rstrip()
+    return _escape_triple_backticks(merged)
 
 
 def _format_tool_call(payload: dict) -> str:
@@ -136,6 +149,9 @@ def _format_tool_call(payload: dict) -> str:
     elif isinstance(args_raw, dict):
         formatted_args = json.dumps(args_raw, ensure_ascii=False, indent=2)
 
+    if formatted_args:
+        formatted_args = _escape_triple_backticks(formatted_args)
+
     lines = [f"- ツール名: `{name}`"]
     call_id = payload.get("call_id")
     if isinstance(call_id, str):
@@ -153,6 +169,8 @@ def _format_tool_output(payload: dict, tool_name: str | None) -> str:
     output = payload.get("output")
     if not isinstance(output, str):
         return ""
+
+    output = _escape_triple_backticks(output)
 
     lines: list[str] = []
     if tool_name:

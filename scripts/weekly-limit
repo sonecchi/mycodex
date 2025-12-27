@@ -9,7 +9,10 @@ Data source:
 - Parses the most recently modified rollout JSONL under CODEX_HOME (default: ~/.codex)/sessions/**/rollout-*.jsonl
 - Finds the last TokenCount event and reads `rate_limits.primary/secondary`
 - Mirrors TUI formatting (rounded to 0 decimals) and computes the reset time
-  from the event timestamp + `resets_in_seconds` (converted to local time).
+  from either:
+    - the absolute `resets_at` epoch seconds (preferred, newest format), or
+    - the event timestamp + `resets_in_seconds` (older format),
+  converted to local time.
 
 Exit codes:
 - 0: Printed a result
@@ -137,11 +140,27 @@ def main() -> int:
             used = float(win.get("used_percent"))
         except Exception:
             return None
-        resets_in = win.get("resets_in_seconds")
         resets_str = None
-        if isinstance(resets_in, (int, float)):
-            reset_local = _to_local(ev_ts + timedelta(seconds=float(resets_in)))
+
+        # Newer format: absolute reset timestamp in epoch seconds
+        resets_at = win.get("resets_at")
+        reset_dt: datetime | None = None
+        if isinstance(resets_at, (int, float)):
+            try:
+                reset_dt = datetime.fromtimestamp(float(resets_at), tz=timezone.utc)
+            except Exception:
+                reset_dt = None
+
+        # Older format: relative seconds from event time
+        if reset_dt is None:
+            resets_in = win.get("resets_in_seconds")
+            if isinstance(resets_in, (int, float)):
+                reset_dt = ev_ts + timedelta(seconds=float(resets_in))
+
+        if reset_dt is not None:
+            reset_local = _to_local(reset_dt)
             resets_str = _format_reset_timestamp(reset_local, captured_local)
+
         base = f"{label} limit: {used:.0f}% used"
         return f"{base} (resets {resets_str})" if resets_str else base
 

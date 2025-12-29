@@ -41,7 +41,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from glob import glob
 from pathlib import Path
 from typing import Iterable
@@ -117,6 +117,18 @@ class MdChunk:
     kind: str  # "user" | "assistant" | "tool_call" | "tool_output" | "reasoning"
     heading: str
     body: str
+
+
+def _format_ts_jst(ts: datetime | None) -> str:
+    """datetime を JST の 'YYYY-MM-DD HH:MM' 形式に整形する。"""
+    if ts is None:
+        return ""
+    try:
+        jst = timezone(timedelta(hours=9))
+        local = ts.astimezone(jst)
+    except Exception:
+        return ""
+    return local.strftime("%Y-%m-%d %H:%M")
 
 
 def _content_to_text(content: list[dict]) -> str:
@@ -225,20 +237,28 @@ def extract_md_chunks(path: Path) -> list[MdChunk]:
             if not text:
                 continue
             if role == "user":
+                ts_str = _format_ts_jst(ts)
+                heading = "# そねっち🤔"
+                if ts_str:
+                    heading = f"{heading} ({ts_str})"
                 chunks.append(
                     MdChunk(
                         ts=ts,
                         kind="user",
-                        heading="# そねっち🤔",
+                        heading=heading,
                         body=text,
                     )
                 )
             elif role == "assistant":
+                ts_str = _format_ts_jst(ts)
+                heading = "# 俺っち🤖"
+                if ts_str:
+                    heading = f"{heading} ({ts_str})"
                 chunks.append(
                     MdChunk(
                         ts=ts,
                         kind="assistant",
-                        heading="# 俺っち🤖",
+                        heading=heading,
                         body=text,
                     )
                 )

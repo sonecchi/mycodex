@@ -361,9 +361,14 @@ def list_mode(num: int) -> int:
 
     target = files_sorted[:num]
 
+    home_path = str(Path.home())
+
     print(f"最近の rollout-*.jsonl 上位 {len(target)} 件 (新しい順):")
     for idx, p in enumerate(target, start=1):
-        print(f"{idx:2d}: {p}")
+        display = str(p)
+        if display.startswith(home_path):
+            display = "~" + display[len(home_path) :]
+        print(f"{idx}: {display}")
 
     # 一応 1 件もないケースはさっき弾いているが、念のため
     if not target:
@@ -399,7 +404,11 @@ def list_mode(num: int) -> int:
         session_id = stem
 
     suggested_md = f"mydocs/worklog/{y:02d}{m:02d}{d:02d}_{session_id}.md"
-    sample_cmd = f"rollout-md -i {chosen} > {suggested_md}"
+    # /home/sonecchi/ を ~ に変更して出力
+    chosen_str = str(chosen)
+    if chosen_str.startswith(home_path):
+        chosen_str = "~" + chosen_str[len(home_path) :]
+    sample_cmd = f"rollout-md -i {chosen_str} > {suggested_md}"
     print(sample_cmd)
     print()
     # -n モードではここまで。実際の .md 出力は、

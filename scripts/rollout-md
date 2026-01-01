@@ -315,14 +315,29 @@ def extract_md_chunks(path: Path) -> list[MdChunk]:
     return chunks
 
 
+def _find_cwd_from_rollout(path: Path) -> str | None:
+    """rollout JSONL 内の session_meta / turn_context などから cwd を探す。"""
+    for obj in iter_jsonl(path):
+        if not isinstance(obj, dict):
+            continue
+        payload = obj.get("payload")
+        if isinstance(payload, dict):
+            cwd = payload.get("cwd")
+            if isinstance(cwd, str):
+                return cwd
+    return None
+
+
 def render_markdown(chunks: list[MdChunk], source: Path) -> str:
     """MdChunk のリストを 1 つの Markdown 文字列にまとめる。"""
     lines: list[str] = []
 
-    # 先頭にちょっとだけメタ情報を付ける
-    lines.append(f"# Codex セッションログ from `{source.name}`")
+    # 先頭に、ファイル名と cwd を付ける
+    out_name = _default_md_path_for_rollout(source).name
+    lines.append(f"# 会話ログ {out_name}")
     lines.append("")
-    lines.append("> このファイルは `rollout-md` で生成された Markdown ログだよ。")
+    cwd = _find_cwd_from_rollout(source) or os.getcwd()
+    lines.append(f"\"cwd\":\"{cwd}\"")
     lines.append("")
 
     for chunk in chunks:

@@ -16,13 +16,13 @@ Codex の rollout-*.jsonl から、
 
 使い方:
 - 引数なし: CODEX_HOME (~/.codex) 配下から「一番新しい rollout-*.jsonl」を自動で選ぶ
-    scripts/rollout-md
+    rollout-md
 
 - 特定の JSONL を指定:
-    scripts/rollout-md -i /path/to/rollout-2025-12-27T....jsonl
+    rollout-md -i /path/to/rollout-2025-12-27T....jsonl
 
 - 最近のファイル一覧モード:
-    scripts/rollout-md -n 10
+    rollout-md -n 10
 
   上位 N 件の rollout-*.jsonl を新しい順に表示して、
   「どれを .md にする？」のメッセージと、
@@ -31,7 +31,7 @@ Codex の rollout-*.jsonl から、
 出力先:
 - 標準出力に Markdown をそのまま吐くので、
   ファイルにしたければリダイレクトで OK:
-    scripts/rollout-md > session-log.md
+    rollout-md > mydocs/worklog/xxx.md
 """
 
 from __future__ import annotations
@@ -45,6 +45,7 @@ from datetime import datetime, timedelta, timezone
 from glob import glob
 from pathlib import Path
 from typing import Iterable
+import re
 
 
 def codex_home() -> Path:
@@ -320,7 +321,7 @@ def render_markdown(chunks: list[MdChunk], source: Path) -> str:
     # 先頭にちょっとだけメタ情報を付ける
     lines.append(f"# Codex セッションログ from `{source.name}`")
     lines.append("")
-    lines.append("> このファイルは `scripts/rollout-md` で生成された Markdown ログだよ。")
+    lines.append("> このファイルは `rollout-md` で生成された Markdown ログだよ。")
     lines.append("")
 
     for chunk in chunks:
@@ -371,7 +372,34 @@ def list_mode(num: int) -> int:
     chosen = target[0]
     print()
     print("どれを.mdにする？")
-    sample_cmd = f"scripts/rollout-md -i {chosen} > session-log.md"
+    # 260101_<session-id>.md 形式で、日付 + セッションIDベースの名前を提案する
+    # 日付部分：YYMMDD は rollout ファイルの mtime から生成（例: 2026-01-01 → 260101）
+    # セッションID：ファイル名 rollout-YYYY-...-HH-MM-SS-<session-id>.jsonl から
+    # 正規表現で <session-id> を抜き出してそのまま使ってる。
+    # もし想定外のファイル名だった場合は、フォールバックで stem 全体を使うようにしてある。
+
+    try:
+        ts = datetime.fromtimestamp(chosen.stat().st_mtime)
+    except Exception:
+        ts = datetime.now()
+    y = ts.year % 100
+    m = ts.month
+    d = ts.day
+
+    stem = chosen.stem
+    session_id = ""
+    if stem.startswith("rollout-"):
+        rest = stem[len("rollout-") :]
+        m_session = re.match(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-(.+)", rest
+        )
+        if m_session:
+            session_id = m_session.group(1)
+    if not session_id:
+        session_id = stem
+
+    suggested_md = f"mydocs/worklog/{y:02d}{m:02d}{d:02d}_{session_id}.md"
+    sample_cmd = f"rollout-md -i {chosen} > {suggested_md}"
     print(sample_cmd)
     print()
     # -n モードではここまで。実際の .md 出力は、

@@ -15,23 +15,24 @@ Codex の rollout-*.jsonl から、
   という見出しで並べていく
 
 使い方:
-- 引数なし: CODEX_HOME (~/.codex) 配下から「一番新しい rollout-*.jsonl」を自動で選ぶ
+- 引数なし: CODEX_HOME (~/.codex) 配下から最近の rollout-*.jsonl を 10 件一覧表示
     rollout-md
 
-- 特定の JSONL を指定:
-    rollout-md -i /path/to/rollout-2025-12-27T....jsonl
+- 特定の JSONL を指定して Markdown をファイルに保存:
+    rollout-md -i /path/to/rollout-2025-12-27T....jsonl -o mydocs/worklog/xxx.md
 
-- 最近のファイル一覧モード:
+- 入力 JSONL を省略して直近のセッションを Markdown に保存:
+    rollout-md -o mydocs/worklog/xxx.md
+
+- 最近のファイル一覧モード（件数指定）:
     rollout-md -n 10
 
   上位 N 件の rollout-*.jsonl を新しい順に表示して、
   「どれを .md にする？」のメッセージと、
-  1件目を使ったサンプルコマンド + その結果の Markdown も続けて出力する。
+  1件目を使ったサンプルコマンドも続けて出力する。
 
 出力先:
-- 標準出力に Markdown をそのまま吐くので、
-  ファイルにしたければリダイレクトで OK:
-    rollout-md > mydocs/worklog/xxx.md
+- -o で指定したパスに Markdown を書き出す。
 """
 
 from __future__ import annotations
@@ -337,6 +338,32 @@ def render_markdown(chunks: list[MdChunk], source: Path) -> str:
     return "\n".join(lines)
 
 
+def _session_id_from_stem(stem: str) -> str:
+    """rollout-*.jsonl の stem からセッションIDっぽい部分を抜き出す。失敗したら stem 全体。"""
+    if stem.startswith("rollout-"):
+        rest = stem[len("rollout-") :]
+        m_session = re.match(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-(.+)", rest
+        )
+        if m_session:
+            return m_session.group(1)
+    return stem
+
+
+def _default_md_path_for_rollout(path: Path) -> Path:
+    """rollout JSONL から、mydocs/worklog/YYMMDD_<session-id>.md のパスを組み立てる。"""
+    try:
+        ts = datetime.fromtimestamp(path.stat().st_mtime)
+    except Exception:
+        ts = datetime.now()
+    y = ts.year % 100
+    m = ts.month
+    d = ts.day
+
+    session_id = _session_id_from_stem(path.stem)
+    return Path("mydocs") / "worklog" / f"{y:02d}{m:02d}{d:02d}_{session_id}.md"
+
+
 def list_mode(num: int) -> int:
     """
     最近の rollout-*.jsonl を num 件だけ一覧表示して、
@@ -378,37 +405,12 @@ def list_mode(num: int) -> int:
     print()
     print("どれを.mdにする？")
     # 260101_<session-id>.md 形式で、日付 + セッションIDベースの名前を提案する
-    # 日付部分：YYMMDD は rollout ファイルの mtime から生成（例: 2026-01-01 → 260101）
-    # セッションID：ファイル名 rollout-YYYY-...-HH-MM-SS-<session-id>.jsonl から
-    # 正規表現で <session-id> を抜き出してそのまま使ってる。
-    # もし想定外のファイル名だった場合は、フォールバックで stem 全体を使うようにしてある。
-
-    try:
-        ts = datetime.fromtimestamp(chosen.stat().st_mtime)
-    except Exception:
-        ts = datetime.now()
-    y = ts.year % 100
-    m = ts.month
-    d = ts.day
-
-    stem = chosen.stem
-    session_id = ""
-    if stem.startswith("rollout-"):
-        rest = stem[len("rollout-") :]
-        m_session = re.match(
-            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-(.+)", rest
-        )
-        if m_session:
-            session_id = m_session.group(1)
-    if not session_id:
-        session_id = stem
-
-    suggested_md = f"mydocs/worklog/{y:02d}{m:02d}{d:02d}_{session_id}.md"
+    suggested_md = str(_default_md_path_for_rollout(chosen))
     # /home/sonecchi/ を ~ に変更して出力
     chosen_str = str(chosen)
     if chosen_str.startswith(home_path):
         chosen_str = "~" + chosen_str[len(home_path) :]
-    sample_cmd = f"rollout-md -i {chosen_str} > {suggested_md}"
+    sample_cmd = f"rollout-md -i {chosen_str} -o {suggested_md}"
     print(sample_cmd)
     print()
     # -n モードではここまで。実際の .md 出力は、
@@ -427,20 +429,75 @@ def main(argv: list[str] | None = None) -> int:
         help="入力に使う rollout-*.jsonl のパス。省略時は直近のファイルを自動検出する。",
     )
     parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        nargs="?",
+        const="",
+        help="出力先の Markdown ファイルのパス。省略時は一覧モード(-n, デフォルト10件)。",
+    )
+    parser.add_argument(
         "-n",
         "--num",
         type=int,
         help="最近の rollout-*.jsonl を N 件一覧表示して、サンプルの Markdown 出力も併せて表示するモード。",
     )
+    parser.add_argument(
+        "-c",
+        "--continue",
+        dest="continue_mode",
+        action="store_true",
+        help="最新の rollout-*.jsonl をデフォルトのパス(mydocs/worklog/YYMMDD_<session-id>.md)に出力するモード。",
+    )
 
     args = parser.parse_args(argv)
 
-    # -n が指定されているときは一覧モード。-i と同時指定は分かりづらいので弾く。
-    if args.num is not None:
-        if args.input:
+    # -c は単独で使うモード
+    if args.continue_mode:
+        if args.num is not None or args.output or args.input:
+            print("-c は単独で使ってくれ！他のオプションとは一緒に使えないんだ。", file=sys.stderr)
+            return 1
+
+        home = codex_home()
+        path = find_latest_rollout(home) or Path("")
+        if not path or not path.exists():
+            print("rollout JSONL が見つからなかったよ… (CODEX_HOME/sessions を確認してみて)", file=sys.stderr)
+            return 1
+
+        chunks = extract_md_chunks(path)
+        if not chunks:
+            print("Markdown にできるイベントが見つからなかった…", file=sys.stderr)
+            return 2
+
+        md = render_markdown(chunks, path)
+        out_path = _default_md_path_for_rollout(path)
+        try:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+
+        try:
+            out_path.write_text(md, encoding="utf-8")
+        except Exception as exc:
+            print(f"Markdown の書き込みに失敗しちゃった…: {exc}", file=sys.stderr)
+            return 1
+
+        print(".mdできたよ！😆firefox🦊で開いてみてね！✨")
+        print(f"firefox {out_path} &")
+        return 0
+
+    # -o がない or 出力先未指定のときは一覧モード（デフォルト 10 件）
+    if not args.output:
+        if args.num is not None and args.input:
             print("-n と -i は同時には使えないよ！どちらか片方にしてくれ。", file=sys.stderr)
             return 1
-        return list_mode(args.num)
+        num = args.num if args.num is not None else 10
+        return list_mode(num)
+
+    # ここからは -o で出力先が指定されているときの処理
+    if args.num is not None:
+        print("-n は一覧モード専用だよ！-o と一緒には使えないよ。", file=sys.stderr)
+        return 1
 
     if args.input:
         path = Path(args.input).expanduser()
@@ -458,11 +515,21 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     md = render_markdown(chunks, path)
+
+    out_path = Path(args.output).expanduser()
     try:
-        sys.stdout.write(md)
-    except BrokenPipeError:
-        # head などで途中でパイプを切られた場合も静かに終わる
-        return 0
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+    try:
+        out_path.write_text(md, encoding="utf-8")
+    except Exception as exc:
+        print(f"Markdown の書き込みに失敗しちゃった…: {exc}", file=sys.stderr)
+        return 1
+
+    print(".mdできたよ！😆firefox🦊で開いてみてね！✨")
+    print(f"firefox {args.output} &")
     return 0
 
 

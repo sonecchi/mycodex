@@ -89,3 +89,8 @@ CHANGELOG.ignore.md
 /mydocs/
 /myscripts/
 
+
+# Python bytecode files
+__pycache__/
+*.pyc
+

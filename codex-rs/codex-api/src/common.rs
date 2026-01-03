@@ -1,8 +1,8 @@
 use crate::error::ApiError;
-use codex_protocol::config_types::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::config_types::Verbosity as VerbosityConfig;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::protocol::RateLimitSnapshot;
 use codex_protocol::protocol::TokenUsage;
 use futures::Stream;
@@ -59,6 +59,7 @@ pub enum ResponseEvent {
         summary_index: i64,
     },
     RateLimits(RateLimitSnapshot),
+    ModelsEtag(String),
 }
 
 #[derive(Debug, Serialize, Clone)]

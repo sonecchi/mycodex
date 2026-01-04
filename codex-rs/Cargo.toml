@@ -278,13 +278,17 @@ unwrap_used = "deny"
 ignored = ["icu_provider", "openssl-sys", "codex-utils-readiness"]
 
 [profile.release]
-lto = "fat"
+#lto = "fat"
+# strip = "symbols"
+# codegen-units = 1
 # Because we bundle some of these executables with the TypeScript CLI, we
 # remove everything to make the binary as small as possible.
+lto = "thin"
 strip = "symbols"
+codegen-units = 16
+
 
 # See https://github.com/openai/codex/issues/1411 for details.
-codegen-units = 1
 
 [profile.ci-test]
 debug = 1         # Reduce debug symbol size

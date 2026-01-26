@@ -29,6 +29,7 @@
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -73,6 +74,73 @@ def codex_home() -> Path:
     if p:
         return Path(p).expanduser()
     return Path.home() / ".codex"
+
+
+def _title_case(s: str) -> str:
+    # "plus" -> "Plus" くらいの軽い用途を想定
+    if not s:
+        return ""
+    return s[:1].upper() + s[1:].lower()
+
+
+def _decode_jwt_payload(jwt_token: str) -> dict | None:
+    parts = jwt_token.split(".")
+    if len(parts) < 2:
+        return None
+
+    payload_b64 = parts[1]
+    # base64url は padding が省略されていることがあるので補う
+    padded = payload_b64 + ("=" * (-len(payload_b64) % 4))
+    try:
+        raw = base64.urlsafe_b64decode(padded)
+    except Exception:
+        return None
+
+    try:
+        obj = json.loads(raw.decode("utf-8", errors="replace"))
+    except Exception:
+        return None
+
+    return obj if isinstance(obj, dict) else None
+
+
+def account_line(home: Path) -> str | None:
+    # ChatGPT ログイン時の id_token から email / plan を拾って 1 行にする。
+    # 取れない場合は None を返して出力しない。
+    auth_path = home / "auth.json"
+    if not auth_path.exists():
+        return None
+
+    try:
+        data = json.loads(auth_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    tokens = data.get("tokens")
+    if not isinstance(tokens, dict):
+        return None
+
+    id_token = tokens.get("id_token")
+    if not isinstance(id_token, str) or not id_token:
+        return None
+
+    claims = _decode_jwt_payload(id_token)
+    if claims is None:
+        return None
+
+    email = claims.get("email")
+    if not isinstance(email, str) or not email:
+        return None
+
+    plan_type: str | None = None
+    auth_claim = claims.get("https://api.openai.com/auth")
+    if isinstance(auth_claim, dict):
+        raw_plan = auth_claim.get("chatgpt_plan_type")
+        if isinstance(raw_plan, str) and raw_plan:
+            plan_type = raw_plan
+
+    plan = _title_case(plan_type) if plan_type else "Unknown"
+    return f"Account: {email} ({plan})"
 
 
 def find_latest_rollout(home: Path) -> Path | None:
@@ -203,6 +271,9 @@ def main() -> int:
     lines = [ln for ln in lines if ln]
     if not lines:
         return 5
+    acct = account_line(home)
+    if acct:
+        lines.append(acct)
     for ln in lines:
         print(ln)
     return 0

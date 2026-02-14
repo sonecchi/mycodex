@@ -91,3 +91,7 @@ CHANGELOG.ignore.md
 __pycache__/
 *.pyc
 
+# sonecchi
+/mydocs/
+/myscripts/
+

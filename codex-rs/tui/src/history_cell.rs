@@ -42,6 +42,8 @@ use codex_core::config::types::McpServerTransportConfig;
 use codex_core::protocol::FileChange;
 use codex_core::protocol::McpAuthStatus;
 use codex_core::protocol::McpInvocation;
+use codex_core::protocol::NetworkAccess;
+use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol::SessionConfiguredEvent;
 use codex_core::web_search::web_search_detail;
 use codex_otel::RuntimeMetricsSummary;
@@ -50,6 +52,7 @@ use codex_protocol::mcp::Resource;
 use codex_protocol::mcp::ResourceTemplate;
 use codex_protocol::models::WebSearchAction;
 use codex_protocol::models::local_image_label_text;
+use codex_protocol::num_format::format_with_separators;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::plan_tool::PlanItemArg;
 use codex_protocol::plan_tool::StepStatus;
@@ -1032,7 +1035,8 @@ pub(crate) fn new_session_info(
         reasoning_effort,
         config.cwd.clone(),
         CODEX_CLI_VERSION,
-    );
+    )
+    .with_session_settings(config);
     let mut parts: Vec<Box<dyn HistoryCell>> = vec![Box::new(header)];
 
     if is_first_event {
@@ -1110,6 +1114,12 @@ pub(crate) struct SessionHeaderHistoryCell {
     model_style: Style,
     reasoning_effort: Option<ReasoningEffortConfig>,
     directory: PathBuf,
+    sandbox: String,
+    network: String,
+    approval: String,
+    summary: String,
+    project_doc_max_bytes: usize,
+    model_auto_compact_token_limit: Option<i64>,
 }
 
 impl SessionHeaderHistoryCell {
@@ -1141,7 +1151,43 @@ impl SessionHeaderHistoryCell {
             model_style,
             reasoning_effort,
             directory,
+            sandbox: "<unknown>".to_string(),
+            network: "<unknown>".to_string(),
+            approval: "<unknown>".to_string(),
+            summary: "<unknown>".to_string(),
+            project_doc_max_bytes: 0,
+            model_auto_compact_token_limit: None,
         }
+    }
+
+    pub(crate) fn with_session_settings(self, config: &Config) -> Self {
+        let sandbox_policy = config.permissions.sandbox_policy.get();
+        self.with_session_details(
+            Self::sandbox_policy_label(sandbox_policy).to_string(),
+            Self::network_access_label(sandbox_policy).to_string(),
+            config.permissions.approval_policy.value().to_string(),
+            config.model_reasoning_summary.to_string(),
+            config.project_doc_max_bytes,
+            config.model_auto_compact_token_limit,
+        )
+    }
+
+    pub(crate) fn with_session_details(
+        mut self,
+        sandbox: String,
+        network: String,
+        approval: String,
+        summary: String,
+        project_doc_max_bytes: usize,
+        model_auto_compact_token_limit: Option<i64>,
+    ) -> Self {
+        self.sandbox = sandbox;
+        self.network = network;
+        self.approval = approval;
+        self.summary = summary;
+        self.project_doc_max_bytes = project_doc_max_bytes;
+        self.model_auto_compact_token_limit = model_auto_compact_token_limit;
+        self
     }
 
     fn format_directory(&self, max_width: Option<usize>) -> String {
@@ -1181,6 +1227,55 @@ impl SessionHeaderHistoryCell {
             ReasoningEffortConfig::None => "none",
         })
     }
+
+    fn sandbox_policy_label(sandbox_policy: &SandboxPolicy) -> &'static str {
+        match sandbox_policy {
+            SandboxPolicy::DangerFullAccess => "danger-full-access",
+            SandboxPolicy::ReadOnly { .. } => "read-only",
+            SandboxPolicy::ExternalSandbox { .. } => "external-sandbox",
+            SandboxPolicy::WorkspaceWrite { .. } => "workspace-write",
+        }
+    }
+
+    fn network_access_label(sandbox_policy: &SandboxPolicy) -> &'static str {
+        match sandbox_policy {
+            SandboxPolicy::DangerFullAccess => "enabled",
+            SandboxPolicy::ReadOnly { .. } => "restricted",
+            SandboxPolicy::WorkspaceWrite { network_access, .. } => {
+                if *network_access {
+                    "enabled"
+                } else {
+                    "restricted"
+                }
+            }
+            SandboxPolicy::ExternalSandbox { network_access } => {
+                if matches!(network_access, NetworkAccess::Enabled) {
+                    "enabled"
+                } else {
+                    "restricted"
+                }
+            }
+        }
+    }
+
+    fn format_project_doc_max_bytes(bytes: usize) -> String {
+        let kb = bytes as f64 / 1024.0;
+        let rounded_kb = kb.round();
+        let kb_display = if (kb - rounded_kb).abs() < 0.05 {
+            format!("{rounded_kb:.0}")
+        } else {
+            format!("{kb:.1}")
+        };
+        format!("{bytes} ({kb_display} KB)")
+    }
+
+    fn format_auto_compact_limit(limit: Option<i64>) -> String {
+        match limit {
+            Some(value) if value >= 0 => format_with_separators(value),
+            Some(value) => value.to_string(),
+            None => "<default>".to_string(),
+        }
+    }
 }
 
 impl HistoryCell for SessionHeaderHistoryCell {
@@ -1202,6 +1297,12 @@ impl HistoryCell for SessionHeaderHistoryCell {
         const CHANGE_MODEL_HINT_COMMAND: &str = "/model";
         const CHANGE_MODEL_HINT_EXPLANATION: &str = " to change";
         const DIR_LABEL: &str = "directory:";
+        const SANDBOX_LABEL: &str = "sandbox:";
+        const NETWORK_LABEL: &str = "network:";
+        const APPROVAL_LABEL: &str = "approval:";
+        const SUMMARY_LABEL: &str = "summary:";
+        const PROJECT_DOC_MAX_BYTES_LABEL: &str = "project_doc_max_bytes:";
+        const AUTO_COMPACT_LIMIT_LABEL: &str = "model_auto_compact_token_limit:";
         let label_width = DIR_LABEL.len();
 
         let model_label = format!(
@@ -1231,12 +1332,46 @@ impl HistoryCell for SessionHeaderHistoryCell {
         let dir_max_width = inner_width.saturating_sub(dir_prefix_width);
         let dir = self.format_directory(Some(dir_max_width));
         let dir_spans = vec![Span::from(dir_prefix).dim(), Span::from(dir)];
+        let sandbox_spans = vec![
+            Span::from(format!("{SANDBOX_LABEL:<label_width$} ")).dim(),
+            Span::from(self.sandbox.clone()),
+        ];
+        let network_spans = vec![
+            Span::from(format!("{NETWORK_LABEL:<label_width$} ")).dim(),
+            Span::from(self.network.clone()),
+        ];
+        let approval_spans = vec![
+            Span::from(format!("{APPROVAL_LABEL:<label_width$} ")).dim(),
+            Span::from(self.approval.clone()),
+        ];
+        let summary_spans = vec![
+            Span::from(format!("{SUMMARY_LABEL:<label_width$} ")).dim(),
+            Span::from(self.summary.clone()),
+        ];
+        let project_doc_max_bytes_spans = vec![
+            Span::from(format!("{PROJECT_DOC_MAX_BYTES_LABEL:<label_width$} ")).dim(),
+            Span::from(Self::format_project_doc_max_bytes(
+                self.project_doc_max_bytes,
+            )),
+        ];
+        let auto_compact_limit_spans = vec![
+            Span::from(format!("{AUTO_COMPACT_LIMIT_LABEL:<label_width$} ")).dim(),
+            Span::from(Self::format_auto_compact_limit(
+                self.model_auto_compact_token_limit,
+            )),
+        ];
 
         let lines = vec![
             make_row(title_spans),
             make_row(Vec::new()),
             make_row(model_spans),
             make_row(dir_spans),
+            make_row(sandbox_spans),
+            make_row(network_spans),
+            make_row(approval_spans),
+            make_row(summary_spans),
+            make_row(project_doc_max_bytes_spans),
+            make_row(auto_compact_limit_spans),
         ];
 
         with_border(lines)
@@ -3042,6 +3177,14 @@ mod tests {
             Some(ReasoningEffortConfig::High),
             std::env::temp_dir(),
             "test",
+        )
+        .with_session_details(
+            "workspace-write".to_string(),
+            "restricted".to_string(),
+            "on-request".to_string(),
+            "detailed".to_string(),
+            32768,
+            Some(200_000),
         );
 
         let lines = render_lines(&cell.display_lines(80));
@@ -3052,6 +3195,57 @@ mod tests {
 
         assert!(model_line.contains("gpt-4o high"));
         assert!(model_line.contains("/model to change"));
+    }
+
+    #[test]
+    fn session_header_snapshot_with_custom_fields() {
+        let cell = SessionHeaderHistoryCell::new(
+            "gpt-5-codex".to_string(),
+            Some(ReasoningEffortConfig::High),
+            PathBuf::from("mycodex"),
+            "test",
+        )
+        .with_session_details(
+            "workspace-write".to_string(),
+            "restricted".to_string(),
+            "on-request".to_string(),
+            "detailed".to_string(),
+            32768,
+            Some(200_000),
+        );
+
+        let rendered = render_lines(&cell.display_lines(100)).join("\n");
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn session_header_formats_project_doc_limit_and_default_auto_compact_limit() {
+        let cell = SessionHeaderHistoryCell::new(
+            "gpt-5-codex".to_string(),
+            None,
+            PathBuf::from("mycodex"),
+            "test",
+        )
+        .with_session_details(
+            "read-only".to_string(),
+            "restricted".to_string(),
+            "never".to_string(),
+            "auto".to_string(),
+            33_000,
+            None,
+        );
+
+        let lines = render_lines(&cell.display_lines(120));
+        let project_doc_line = lines
+            .iter()
+            .find(|line| line.contains("project_doc_max_bytes:"))
+            .expect("project doc line");
+        assert!(project_doc_line.contains("33000 (32.2 KB)"));
+        let auto_compact_line = lines
+            .iter()
+            .find(|line| line.contains("model_auto_compact_token_limit:"))
+            .expect("auto compact line");
+        assert!(auto_compact_line.contains("<default>"));
     }
 
     #[test]

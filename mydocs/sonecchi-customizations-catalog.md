@@ -49,7 +49,7 @@ network:    restricted
 approval:   on-request
 summary:    detailed
 project_doc_max_bytes: 32768 (32 KB)
-model_auto_compact_token_limit: <default>
+model_auto_compact_token_limit: <disabled>
 ```
 
 #### 実装方針（触るファイルとかも）
@@ -113,22 +113,59 @@ model_auto_compact_token_limit: <default>
 - 配置: `project_doc_max_bytes:` の直下（この順序が要件）
 - 値の扱い:
   - `None` のときは `<default>` と表示（モデル既定値のまま）
+  - `0` 以下のときは `<disabled>` と表示（自動コンパクト無効）
   - 正の数のときは桁区切りで見やすく（例: `200,000`）
 
 #### 受け入れ基準
 
 - `~/.codex/config.toml` で `model_auto_compact_token_limit` を設定したら、ヘッダーカードで即確認できる
 - `None` の場合も「未設定」が分かる（`<default>`）
+- `model_auto_compact_token_limit = 0` の場合、ヘッダーカードで `<disabled>` と表示され、**自動コンパクトが走らない**
 
 #### 実装方針（触るファイルとかも）
 
 - `codex-rs/tui/src/history_cell.rs`
   - `Config.model_auto_compact_token_limit: Option<i64>` をヘッダセルへ渡す
-  - 表示時に `Some(v) if v >= 0` のときは “桁区切りフォーマット”を使う（現行は `format_with_separators(v)` 相当）
+  - 表示時に `Some(v) if v <= 0` は `<disabled>`、`Some(v)`（正の数）は “桁区切りフォーマット”を使う（`format_with_separators(v)` 相当）
+
+#### 仕様（自動コンパクトが走る条件 / 2段構え）
+
+自動コンパクトは「(A) 閾値の確定」→「(B) 実行ポイントでの発火判定」の2段構えになっている。
+
+- (A) **閾値（auto_compact_limit）の確定**
+  - `ModelInfo::auto_compact_token_limit()` が「有効な閾値」を `Option<i64>` で返す
+    - 実装: `codex-rs/protocol/src/openai_models.rs`
+    - 仕様:
+      - `auto_compact_token_limit <= 0` の場合: `None`（= 自動コンパクト無効）
+      - `context_window` がある場合: デフォ閾値は `context_window * 0.9`、明示値があるなら `min(明示値, context_window * 0.9)` にクランプ
+      - `context_window` が無い場合: 明示値のみを使用
+  - core 側は `model_info.auto_compact_token_limit().unwrap_or(i64::MAX)` で扱う
+    - `None` の場合は実質「到達しない閾値」になり、自動発火しない
+    - 参照: `codex-rs/core/src/codex.rs`
+  - `Config.model_auto_compact_token_limit` はモデル情報に反映される
+    - 参照: `codex-rs/core/src/models_manager/model_info.rs`
+
+- (B) **実行ポイント（どこで、どういう条件で `run_auto_compact` が呼ばれるか）**
+  - ① ターン開始時（モデルに投げる前）
+    - `total_usage_tokens >= auto_compact_limit` なら `run_auto_compact(...)`
+    - 参照: `codex-rs/core/src/codex.rs`（`run_pre_sampling_compact`）
+  - ② モデル切替時（新しいモデルの方が context_window が小さい場合の救済）
+    - `total_usage_tokens > new_auto_compact_limit`
+    - かつ モデルslugが変わった
+    - かつ `old_context_window > new_context_window`
+    - のとき、**前モデル側の turn_context** で `run_auto_compact(...)`
+    - 参照: `codex-rs/core/src/codex.rs`（`maybe_run_previous_model_inline_compact`）
+  - ③ ターン途中（follow-upが必要なときだけ）
+    - サンプリング直後に `total_usage_tokens >= auto_compact_limit` かつ `needs_follow_up == true` のとき `run_auto_compact(...)` → ループ継続
+    - 参照: `codex-rs/core/src/codex.rs`（post sampling の `token_limit_reached && needs_follow_up`）
+
+- 補足: `total_usage_tokens` の定義
+  - `sess.get_total_token_usage()` は「直近API応答の total_tokens」＋「それ以降に追加された履歴アイテムの推定トークン」等で計算される
+  - 参照: `codex-rs/core/src/context_manager/history.rs`
 
 #### 注意点
 
-- 自動コンパクトを無効化したいなら、`~/.codex/config.toml` に `model_auto_compact_token_limit = 0` を設定する（`0` は disable）。
+- そねっち運用として自動コンパクトは無効化したい → `~/.codex/config.toml` に `model_auto_compact_token_limit = 0` を設定する（`0` は disable）。
   - ちなみに「めちゃデカい値にして実質停止」は、`context_window * 0.9` にクランプされるので基本効かない（例: `gpt-5.2-codex` なら上限 `244,800`）。
 
 ---

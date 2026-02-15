@@ -67,10 +67,8 @@ git switch -c sonecchi-rebuild-YYYYMMDD
 ### 3) 仕様書に沿って “必要な分だけ” カスタムを再実装
 
 - まず読む: `mydocs/sonecchi-customizations-catalog.md`
-- 追加で読む（必要に応じて）:
-  - `mydocs/codex-tui-header-customs*.md`
-  - `mydocs/codex-tui-osc-color-filter-2025-10-11.md`
-  - `mydocs/codex-tui-summary-line-2025-09-27.md`
+- 追加で読む（必要に応じて / カタログ未収載のとき）: ※将来「これ読んどけ」メモができたらここに追記
+  - （いまは空）
 
 ### 4) 仕上げ（テスト・メモ）
 

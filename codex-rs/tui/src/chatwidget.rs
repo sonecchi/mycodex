@@ -6355,6 +6355,11 @@ impl ChatWidget {
             None,
             config.cwd.clone(),
             CODEX_CLI_VERSION,
+            config.permissions.sandbox_policy.get().clone(),
+            config.permissions.approval_policy.value(),
+            config.model_reasoning_summary,
+            config.project_doc_max_bytes,
+            config.model_auto_compact_token_limit,
         ))
     }
 

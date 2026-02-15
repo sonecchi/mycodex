@@ -44,20 +44,24 @@ upstream remote が無いなら作る：
 
 ```bash
 git remote add upstream git@github.com:openai/codex.git
-git fetch upstream
+git fetch --prune upstream
 ```
 
-### 1) `main` を最新 upstream に合わせる（※破壊的になりうるので要注意）
+### 1) `main` を最新 upstream に合わせる（ff-only）
 
-ここは運用次第。**force が絡む操作は勝手にやらず、必ず確認**。
+```bash
+git switch main
+git fetch --prune upstream
+git merge --ff-only upstream/main # main ブランチは直接修正しないから基本通るはず
+```
 
-やりたいことはシンプルで、「土台（main）を upstream の状態にする」。
+`--ff-only` が失敗したら、だいたいは「ローカルの `main` が upstream とズレてる」サイン。
+その場合は一旦ストップして、どうするか（reset する？運用を変える？）を決めてから動くこと。
 
 ### 2) 再実装ブランチを切る
 
 ```bash
-git checkout main
-git checkout -b sonecchi-rebuild-YYYYMMDD
+git switch -c sonecchi-rebuild-YYYYMMDD
 ```
 
 ### 3) 仕様書に沿って “必要な分だけ” カスタムを再実装

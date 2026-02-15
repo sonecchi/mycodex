@@ -100,6 +100,16 @@ git switch -c sonecchi-rebuild-YYYYMMDD
   - upstream 追従で “口調/ポリシー/安全寄りの挙動” が変わりやすい。
   - 取り込みは慎重に。必要なら **そねっち好みに戻す**（ここ重要）。
 
+### バックアップ（bk/）
+
+- システムプロンプトはバックアップ済み
+- 重要なファイルについては適宜、`bk/` にバックアップ推奨
+
+```bash
+mkdir -p bk/codex-rs/core
+git show sonecchi-merge-20260104:codex-rs/core/prompt.md > bk/codex-rs/core/prompt.md
+```
+
 ---
 
 ## ビルド方法（忘れん坊対策）

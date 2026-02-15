@@ -1319,8 +1319,8 @@ impl HistoryCell for SessionHeaderHistoryCell {
 
         let auto_compact_display = match self.model_auto_compact_token_limit {
             None => "<default>".to_string(),
-            Some(limit) if limit >= 0 => format_with_separators(limit),
-            Some(limit) => limit.to_string(),
+            Some(limit) if limit <= 0 => "<disabled>".to_string(),
+            Some(limit) => format_with_separators(limit),
         };
         let auto_compact_spans = vec![
             "model_auto_compact_token_limit: ".dim(),
@@ -3172,6 +3172,25 @@ mod tests {
             ReasoningSummary::Detailed,
             32 * 1024,
             None,
+        );
+
+        let rendered = render_lines(&cell.display_lines(80)).join("\n");
+
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn session_header_snapshot_with_auto_compact_disabled() {
+        let cell = SessionHeaderHistoryCell::new(
+            "gpt-5-codex".to_string(),
+            Some(ReasoningEffortConfig::High),
+            home_dir().expect("home directory"),
+            "test",
+            SandboxPolicy::new_workspace_write_policy(),
+            AskForApproval::OnRequest,
+            ReasoningSummary::Detailed,
+            32 * 1024,
+            Some(0),
         );
 
         let rendered = render_lines(&cell.display_lines(80)).join("\n");

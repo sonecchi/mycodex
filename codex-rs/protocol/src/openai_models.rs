@@ -239,7 +239,7 @@ pub struct ModelInfo {
     pub context_window: Option<i64>,
     /// Token threshold for automatic compaction. When omitted, core derives it
     /// from `context_window` (90%). When provided, core clamps it to 90% of the
-    /// context window when available.
+    /// context window when available. A value of `0` disables auto-compaction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_compact_token_limit: Option<i64>,
     /// Percentage of the context window considered usable for inputs, after
@@ -257,10 +257,15 @@ pub struct ModelInfo {
 
 impl ModelInfo {
     pub fn auto_compact_token_limit(&self) -> Option<i64> {
+        let config_limit = self.auto_compact_token_limit;
+        // Sentinel: allow config/model metadata to disable auto-compaction.
+        if config_limit.is_some_and(|limit| limit <= 0) {
+            return None;
+        }
+
         let context_limit = self
             .context_window
             .map(|context_window| (context_window * 9) / 10);
-        let config_limit = self.auto_compact_token_limit;
         if let Some(context_limit) = context_limit {
             return Some(
                 config_limit.map_or(context_limit, |limit| std::cmp::min(limit, context_limit)),
@@ -672,5 +677,36 @@ mod tests {
             Some(String::new())
         );
         assert_eq!(personality_variables.get_personality_message(None), None);
+    }
+
+    #[test]
+    fn auto_compact_limit_derives_from_context_window() {
+        let mut model = test_model(None);
+        model.context_window = Some(100);
+        assert_eq!(model.auto_compact_token_limit(), Some(90));
+    }
+
+    #[test]
+    fn auto_compact_limit_clamps_to_context_window() {
+        let mut model = test_model(None);
+        model.context_window = Some(100);
+        model.auto_compact_token_limit = Some(200);
+        assert_eq!(model.auto_compact_token_limit(), Some(90));
+    }
+
+    #[test]
+    fn auto_compact_limit_can_be_lower_than_default() {
+        let mut model = test_model(None);
+        model.context_window = Some(100);
+        model.auto_compact_token_limit = Some(50);
+        assert_eq!(model.auto_compact_token_limit(), Some(50));
+    }
+
+    #[test]
+    fn auto_compact_limit_zero_disables_compaction() {
+        let mut model = test_model(None);
+        model.context_window = Some(100);
+        model.auto_compact_token_limit = Some(0);
+        assert_eq!(model.auto_compact_token_limit(), None);
     }
 }

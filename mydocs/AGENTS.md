@@ -104,6 +104,9 @@ git switch -c sonecchi-rebuild-YYYYMMDD
 
 ## ビルド方法（忘れん坊対策）
 
+修正が終わったら一旦、**そねっちに報告**。
+そねっちの **許可がない限りビルドはしないこと**。
+
 ```bash
 cd codex-rs
 cargo build --release -j 5  # ジョブ数を指定しないとメモリ不足になりがち

@@ -257,16 +257,18 @@ pub struct ModelInfo {
 
 impl ModelInfo {
     pub fn auto_compact_token_limit(&self) -> Option<i64> {
+        let config_limit = match self.auto_compact_token_limit {
+            Some(limit) if limit <= 0 => return None,
+            Some(limit) => Some(limit),
+            None => None,
+        };
+
         let context_limit = self
             .context_window
             .map(|context_window| (context_window * 9) / 10);
-        let config_limit = self.auto_compact_token_limit;
-        if let Some(context_limit) = context_limit {
-            return Some(
-                config_limit.map_or(context_limit, |limit| std::cmp::min(limit, context_limit)),
-            );
-        }
-        config_limit
+        context_limit.map_or(config_limit, |context_limit| {
+            Some(config_limit.map_or(context_limit, |limit| std::cmp::min(limit, context_limit)))
+        })
     }
 
     pub fn supports_personality(&self) -> bool {
@@ -526,6 +528,36 @@ mod tests {
             personality_friendly: Some("friendly".to_string()),
             personality_pragmatic: Some("pragmatic".to_string()),
         }
+    }
+
+    #[test]
+    fn auto_compact_token_limit_defaults_and_clamps_to_context_window() {
+        let mut model = test_model(None);
+        model.context_window = Some(1_000);
+
+        assert_eq!(model.auto_compact_token_limit(), Some(900));
+
+        model.auto_compact_token_limit = Some(800);
+        assert_eq!(model.auto_compact_token_limit(), Some(800));
+
+        model.auto_compact_token_limit = Some(950);
+        assert_eq!(model.auto_compact_token_limit(), Some(900));
+    }
+
+    #[test]
+    fn auto_compact_token_limit_returns_none_when_disabled() {
+        let mut model = test_model(None);
+        model.context_window = Some(1_000);
+
+        model.auto_compact_token_limit = Some(0);
+        assert_eq!(model.auto_compact_token_limit(), None);
+
+        model.auto_compact_token_limit = Some(-1);
+        assert_eq!(model.auto_compact_token_limit(), None);
+
+        model.context_window = None;
+        model.auto_compact_token_limit = Some(0);
+        assert_eq!(model.auto_compact_token_limit(), None);
     }
 
     #[test]

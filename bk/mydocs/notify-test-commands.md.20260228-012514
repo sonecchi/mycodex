@@ -1,0 +1,63 @@
+# codex-notify テスト用コマンド集 🧪🔔
+
+`myscripts/codex-notify.sh` に “通知イベント(JSON)” を投げて、デスクトップ通知 + 効果音が鳴るかを手早く確認する用のコピペ集。
+
+前提:
+- `mycodex/` リポジトリのルートで実行する（`./myscripts/...` が通る状態）
+- 通知が出ない場合は `notify-send` が入ってるかチェック（無くても stderr には出る 👍）
+- （推奨）`jq` があると JSON をちゃんと解析できる（無い場合は `"type":"..."` の文字列マッチなので、スペース入りJSONだと判定ミスることがある）
+
+## 入力JSON（最低限）
+
+- 必須: `type`（string）
+- 推奨: `"last-assistant-message"`（string）
+  - `type: "agent-turn-complete"` のとき通知本文になる
+  - 未指定なら `"Turn complete"` が表示される
+
+※上記以外のプロパティがあっても、このスクリプトでは基本参照されず **無視される**（ので、テスト用なら削ってOK）
+
+---
+
+## 1) exec-approval-requested（コマンド実行の承認待ち）⚠️
+
+「このコマンド実行していい？」って承認が必要なときの通知をテストするやつ。
+通知本文に `reason` と `command` が出るのが目印。
+
+```bash
+./myscripts/codex-notify.sh \
+  '{"type":"exec-approval-requested","reason":"needs network access","command":["npm","install"]}'
+```
+
+---
+
+## 2) apply-patch-approval-requested（パッチ適用の承認待ち）🧩
+
+「apply_patch していい？」みたいな “書き込み承認待ち” 通知のテスト。
+`変更ファイル数:3` が表示されればOK。
+
+```bash
+./myscripts/codex-notify.sh \
+  '{"type":"apply-patch-approval-requested","changes_count":3}'
+```
+
+---
+
+## 3) agent-turn-complete（ターン完了）✅
+
+エージェントが一仕事終えたときの “完了通知” テスト。
+`last-assistant-message` がそのまま通知文になる。
+
+```bash
+./myscripts/codex-notify.sh \
+  '{"type":"agent-turn-complete","last-assistant-message":"Done"}'
+```
+
+---
+
+## 小ワザ（任意）🛠️
+
+JSON をファイルにして渡したい派へ：
+
+```bash
+cat payload.json | ./myscripts/codex-notify.sh -
+```

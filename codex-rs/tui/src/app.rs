@@ -796,11 +796,30 @@ impl App {
         width: u16,
         version: &'static str,
     ) -> Vec<Line<'static>> {
+        let sandbox_policy = self.config.permissions.sandbox_policy.get().to_string();
+        let network_access_enabled = self
+            .config
+            .permissions
+            .sandbox_policy
+            .get()
+            .has_full_network_access();
+        let approval_policy = self.config.permissions.approval_policy.get().to_string();
+        let summary = self
+            .config
+            .model_reasoning_summary
+            .unwrap_or_default()
+            .to_string();
         history_cell::SessionHeaderHistoryCell::new(
             self.chat_widget.current_model().to_string(),
             self.chat_widget.current_reasoning_effort(),
             self.config.cwd.clone(),
             version,
+            sandbox_policy,
+            network_access_enabled,
+            approval_policy,
+            summary,
+            self.config.project_doc_max_bytes,
+            self.config.model_auto_compact_token_limit,
         )
         .display_lines(width)
     }

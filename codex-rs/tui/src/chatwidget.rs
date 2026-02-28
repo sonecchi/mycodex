@@ -7104,12 +7104,29 @@ impl ChatWidget {
     /// Build a placeholder header cell while the session is configuring.
     fn placeholder_session_header_cell(config: &Config) -> Box<dyn HistoryCell> {
         let placeholder_style = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
+        let sandbox_policy = config.permissions.sandbox_policy.get().to_string();
+        let network_access_enabled = config
+            .permissions
+            .sandbox_policy
+            .get()
+            .has_full_network_access();
+        let approval_policy = config.permissions.approval_policy.get().to_string();
+        let summary = config
+            .model_reasoning_summary
+            .unwrap_or_default()
+            .to_string();
         Box::new(history_cell::SessionHeaderHistoryCell::new_with_style(
             DEFAULT_MODEL_DISPLAY_NAME.to_string(),
             placeholder_style,
             None,
             config.cwd.clone(),
             CODEX_CLI_VERSION,
+            sandbox_policy,
+            network_access_enabled,
+            approval_policy,
+            summary,
+            config.project_doc_max_bytes,
+            config.model_auto_compact_token_limit,
         ))
     }
 

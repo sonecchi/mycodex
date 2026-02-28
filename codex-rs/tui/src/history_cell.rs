@@ -46,6 +46,7 @@ use codex_protocol::mcp::Resource;
 use codex_protocol::mcp::ResourceTemplate;
 use codex_protocol::models::WebSearchAction;
 use codex_protocol::models::local_image_label_text;
+use codex_protocol::num_format::format_with_separators;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::plan_tool::PlanItemArg;
 use codex_protocol::plan_tool::StepStatus;
@@ -1049,12 +1050,29 @@ pub(crate) fn new_session_info(
         reasoning_effort,
         ..
     } = event;
+    let sandbox_policy = config.permissions.sandbox_policy.get().to_string();
+    let network_access_enabled = config
+        .permissions
+        .sandbox_policy
+        .get()
+        .has_full_network_access();
+    let approval_policy = config.permissions.approval_policy.get().to_string();
+    let summary = config
+        .model_reasoning_summary
+        .unwrap_or_default()
+        .to_string();
     // Header box rendered as history (so it appears at the very top)
     let header = SessionHeaderHistoryCell::new(
         model.clone(),
         reasoning_effort,
         config.cwd.clone(),
         CODEX_CLI_VERSION,
+        sandbox_policy,
+        network_access_enabled,
+        approval_policy,
+        summary,
+        config.project_doc_max_bytes,
+        config.model_auto_compact_token_limit,
     );
     let mut parts: Vec<Box<dyn HistoryCell>> = vec![Box::new(header)];
 
@@ -1135,6 +1153,12 @@ pub(crate) struct SessionHeaderHistoryCell {
     model_style: Style,
     reasoning_effort: Option<ReasoningEffortConfig>,
     directory: PathBuf,
+    sandbox_policy: String,
+    network_access_enabled: bool,
+    approval_policy: String,
+    summary: String,
+    project_doc_max_bytes: usize,
+    model_auto_compact_token_limit: Option<i64>,
 }
 
 impl SessionHeaderHistoryCell {
@@ -1143,6 +1167,12 @@ impl SessionHeaderHistoryCell {
         reasoning_effort: Option<ReasoningEffortConfig>,
         directory: PathBuf,
         version: &'static str,
+        sandbox_policy: String,
+        network_access_enabled: bool,
+        approval_policy: String,
+        summary: String,
+        project_doc_max_bytes: usize,
+        model_auto_compact_token_limit: Option<i64>,
     ) -> Self {
         Self::new_with_style(
             model,
@@ -1150,6 +1180,12 @@ impl SessionHeaderHistoryCell {
             reasoning_effort,
             directory,
             version,
+            sandbox_policy,
+            network_access_enabled,
+            approval_policy,
+            summary,
+            project_doc_max_bytes,
+            model_auto_compact_token_limit,
         )
     }
 
@@ -1159,6 +1195,12 @@ impl SessionHeaderHistoryCell {
         reasoning_effort: Option<ReasoningEffortConfig>,
         directory: PathBuf,
         version: &'static str,
+        sandbox_policy: String,
+        network_access_enabled: bool,
+        approval_policy: String,
+        summary: String,
+        project_doc_max_bytes: usize,
+        model_auto_compact_token_limit: Option<i64>,
     ) -> Self {
         Self {
             version,
@@ -1166,6 +1208,12 @@ impl SessionHeaderHistoryCell {
             model_style,
             reasoning_effort,
             directory,
+            sandbox_policy,
+            network_access_enabled,
+            approval_policy,
+            summary,
+            project_doc_max_bytes,
+            model_auto_compact_token_limit,
         }
     }
 
@@ -1215,6 +1263,16 @@ impl HistoryCell for SessionHeaderHistoryCell {
         };
 
         let make_row = |spans: Vec<Span<'static>>| Line::from(spans);
+        let format_project_doc_max_bytes = |bytes: usize| {
+            let kb = bytes as f64 / 1024.0;
+            let rounded = kb.round();
+            if (kb - rounded).abs() < 0.05 {
+                let rounded_kb = rounded as i64;
+                format!("{bytes} ({rounded_kb} KB)")
+            } else {
+                format!("{bytes} ({kb:.1} KB)")
+            }
+        };
 
         // Title line rendered inside the box: ">_ OpenAI Codex (vX)"
         let title_spans: Vec<Span<'static>> = vec![
@@ -1227,6 +1285,12 @@ impl HistoryCell for SessionHeaderHistoryCell {
         const CHANGE_MODEL_HINT_COMMAND: &str = "/model";
         const CHANGE_MODEL_HINT_EXPLANATION: &str = " to change";
         const DIR_LABEL: &str = "directory:";
+        const SANDBOX_LABEL: &str = "sandbox:";
+        const NETWORK_LABEL: &str = "network:";
+        const APPROVAL_LABEL: &str = "approval:";
+        const SUMMARY_LABEL: &str = "summary:";
+        const PROJECT_DOC_MAX_BYTES_LABEL: &str = "project_doc_max_bytes:";
+        const AUTO_COMPACT_TOKEN_LIMIT_LABEL: &str = "model_auto_compact_token_limit:";
         let label_width = DIR_LABEL.len();
 
         let model_label = format!(
@@ -1257,11 +1321,61 @@ impl HistoryCell for SessionHeaderHistoryCell {
         let dir = self.format_directory(Some(dir_max_width));
         let dir_spans = vec![Span::from(dir_prefix).dim(), Span::from(dir)];
 
+        let sandbox_label = format!("{SANDBOX_LABEL:<label_width$}");
+        let sandbox_spans = vec![
+            Span::from(format!("{sandbox_label} ")).dim(),
+            self.sandbox_policy.clone().into(),
+        ];
+
+        let network_label = format!("{NETWORK_LABEL:<label_width$}");
+        let network_value = if self.network_access_enabled {
+            "enabled".green()
+        } else {
+            "restricted".red()
+        };
+        let network_spans = vec![Span::from(format!("{network_label} ")).dim(), network_value];
+
+        let approval_label = format!("{APPROVAL_LABEL:<label_width$}");
+        let approval_spans = vec![
+            Span::from(format!("{approval_label} ")).dim(),
+            self.approval_policy.clone().into(),
+        ];
+
+        let summary_label = format!("{SUMMARY_LABEL:<label_width$}");
+        let summary_spans = vec![
+            Span::from(format!("{summary_label} ")).dim(),
+            self.summary.clone().into(),
+        ];
+
+        let project_doc_max_bytes_label = format!("{PROJECT_DOC_MAX_BYTES_LABEL:<label_width$}");
+        let project_doc_max_bytes_spans = vec![
+            Span::from(format!("{project_doc_max_bytes_label} ")).dim(),
+            format_project_doc_max_bytes(self.project_doc_max_bytes).into(),
+        ];
+
+        let auto_compact_token_limit_label =
+            format!("{AUTO_COMPACT_TOKEN_LIMIT_LABEL:<label_width$}");
+        let auto_compact_token_limit_value = match self.model_auto_compact_token_limit {
+            None => "<default>".dim(),
+            Some(limit) if limit <= 0 => "<disabled>".dim(),
+            Some(limit) => format_with_separators(limit).into(),
+        };
+        let auto_compact_token_limit_spans = vec![
+            Span::from(format!("{auto_compact_token_limit_label} ")).dim(),
+            auto_compact_token_limit_value,
+        ];
+
         let lines = vec![
             make_row(title_spans),
             make_row(Vec::new()),
             make_row(model_spans),
             make_row(dir_spans),
+            make_row(sandbox_spans),
+            make_row(network_spans),
+            make_row(approval_spans),
+            make_row(summary_spans),
+            make_row(project_doc_max_bytes_spans),
+            make_row(auto_compact_token_limit_spans),
         ];
 
         with_border(lines)
@@ -3270,6 +3384,12 @@ mod tests {
             Some(ReasoningEffortConfig::High),
             std::env::temp_dir(),
             "test",
+            "workspace-write".to_string(),
+            false,
+            "on-request".to_string(),
+            "auto".to_string(),
+            32 * 1024,
+            None,
         );
 
         let lines = render_lines(&cell.display_lines(80));
@@ -3280,6 +3400,26 @@ mod tests {
 
         assert!(model_line.contains("gpt-4o high"));
         assert!(model_line.contains("/model to change"));
+    }
+
+    #[test]
+    fn session_header_snapshot_with_custom_fields() {
+        let cell = SessionHeaderHistoryCell::new(
+            "gpt-5.2-codex".to_string(),
+            Some(ReasoningEffortConfig::High),
+            std::path::PathBuf::from("mycodex"),
+            "test",
+            "workspace-write".to_string(),
+            false,
+            "on-request".to_string(),
+            "detailed".to_string(),
+            33_000,
+            Some(0),
+        );
+
+        let rendered = render_lines(&cell.display_lines(80)).join("\n");
+
+        insta::assert_snapshot!(rendered);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 ---
 source: tui/src/history_cell.rs
-assertion_line: 2756
+assertion_line: 2788
 expression: rendered
 ---
 ╭──────────────────────────────────────────────────────────╮
@@ -8,12 +8,10 @@ expression: rendered
 │                                                          │
 │ model:                          gpt-5   /model to change │
 │ directory:                      /tmp/project             │
-│ sandbox:                        read-only                │
-│ network:                        restricted               │
-│ approval:                       on-request               │
+│ sandbox:                        danger-full-access       │
+│ network:                        enabled                  │
+│ approval:                       never                    │
 │ summary:                        auto                     │
-│ project_doc_max_bytes:          32768 (32 KB)            │
-│ model_auto_compact_token_limit: <default>                │
+│ project_doc_max_bytes:          102400 (100 KB)          │
+│ model_auto_compact_token_limit: <disabled>               │
 ╰──────────────────────────────────────────────────────────╯
-
-  Tip: Model just became available

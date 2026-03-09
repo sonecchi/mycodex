@@ -7655,6 +7655,7 @@ impl ChatWidget {
             None,
             false,
             config.cwd.clone(),
+            history_cell::SessionHeaderDetails::from_config(config),
             CODEX_CLI_VERSION,
         ))
     }

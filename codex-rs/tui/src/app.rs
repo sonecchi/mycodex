@@ -921,6 +921,7 @@ impl App {
             self.chat_widget
                 .should_show_fast_status(self.chat_widget.current_service_tier()),
             self.config.cwd.clone(),
+            history_cell::SessionHeaderDetails::from_config(&self.config),
             version,
         )
         .display_lines(width)

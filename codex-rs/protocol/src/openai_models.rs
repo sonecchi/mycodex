@@ -286,6 +286,13 @@ pub struct ModelInfo {
 
 impl ModelInfo {
     pub fn auto_compact_token_limit(&self) -> Option<i64> {
+        if self
+            .auto_compact_token_limit
+            .is_some_and(|config_limit| config_limit <= 0)
+        {
+            return None;
+        }
+
         let context_limit = self
             .context_window
             .map(|context_window| (context_window * 9) / 10);
@@ -749,5 +756,31 @@ mod tests {
                 message: "Try Spark.".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn auto_compact_token_limit_zero_disables_auto_compact() {
+        let mut model = test_model(None);
+        model.context_window = Some(272_000);
+        model.auto_compact_token_limit = Some(0);
+
+        assert_eq!(model.auto_compact_token_limit(), None);
+    }
+
+    #[test]
+    fn auto_compact_token_limit_negative_disables_auto_compact_without_context_window() {
+        let mut model = test_model(None);
+        model.auto_compact_token_limit = Some(-1);
+
+        assert_eq!(model.auto_compact_token_limit(), None);
+    }
+
+    #[test]
+    fn auto_compact_token_limit_clamps_positive_config_to_context_window() {
+        let mut model = test_model(None);
+        model.context_window = Some(100);
+        model.auto_compact_token_limit = Some(200);
+
+        assert_eq!(model.auto_compact_token_limit(), Some(90));
     }
 }

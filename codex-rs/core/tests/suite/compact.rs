@@ -2876,6 +2876,87 @@ async fn auto_compact_counts_encrypted_reasoning_before_last_user() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auto_compact_zero_limit_disables_remote_compaction() {
+    skip_if_no_network!();
+
+    let server = start_mock_server().await;
+
+    let first_user = "AUTO_COMPACT_DISABLED_FIRST";
+    let second_user = "AUTO_COMPACT_DISABLED_SECOND";
+
+    let first_turn = sse(vec![
+        ev_assistant_message("m1", FIRST_REPLY),
+        ev_completed_with_tokens("r1", 80),
+    ]);
+    let second_turn = sse(vec![
+        ev_assistant_message("m2", FINAL_REPLY),
+        ev_completed_with_tokens("r2", 1),
+    ]);
+
+    let request_log = mount_sse_sequence(&server, vec![first_turn, second_turn]).await;
+
+    let compacted_history = vec![
+        codex_protocol::models::ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![codex_protocol::models::ContentItem::OutputText {
+                text: "REMOTE_COMPACT_SUMMARY".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        codex_protocol::models::ResponseItem::Compaction {
+            encrypted_content: "ENCRYPTED_COMPACTION_SUMMARY".to_string(),
+        },
+    ];
+    let compact_mock =
+        mount_compact_json_once(&server, serde_json::json!({ "output": compacted_history })).await;
+
+    let codex = test_codex()
+        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
+        .with_config(|config| {
+            set_test_compact_prompt(config);
+            config.model_auto_compact_token_limit = Some(0);
+        })
+        .build(&server)
+        .await
+        .expect("build codex")
+        .codex;
+
+    for user in [first_user, second_user] {
+        codex
+            .submit(Op::UserInput {
+                items: vec![UserInput::Text {
+                    text: user.into(),
+                    text_elements: Vec::new(),
+                }],
+                final_output_json_schema: None,
+            })
+            .await
+            .unwrap();
+        wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+    }
+
+    assert!(
+        compact_mock.requests().is_empty(),
+        "remote compaction should stay disabled when auto compact limit is 0"
+    );
+
+    let requests = request_log.requests();
+    assert_eq!(
+        requests.len(),
+        2,
+        "conversation should include two user turns"
+    );
+
+    let second_request_body = requests[1].body_json().to_string();
+    assert!(
+        !second_request_body.contains("REMOTE_COMPACT_SUMMARY"),
+        "second turn should not include compacted history when auto compact is disabled"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn auto_compact_runs_when_reasoning_header_clears_between_turns() {
     skip_if_no_network!();
 

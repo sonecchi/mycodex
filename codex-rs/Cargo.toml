@@ -359,14 +359,14 @@ ignored = [
 ]
 
 [profile.release]
-lto = "fat"
+lto = false
 split-debuginfo = "off"
-# Because we bundle some of these executables with the TypeScript CLI, we
-# remove everything to make the binary as small as possible.
-strip = "symbols"
+# Local rebuilds are more important than maximum binary size in this fork.
+strip = "none"
 
-# See https://github.com/openai/codex/issues/1411 for details.
-codegen-units = 1
+# Prefer faster local release builds over maximal optimization.
+codegen-units = 16
+incremental = true
 
 [profile.ci-test]
 debug = 1         # Reduce debug symbol size

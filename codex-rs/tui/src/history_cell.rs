@@ -44,11 +44,13 @@ use codex_core::plugins::PluginsManager;
 use codex_core::web_search::web_search_detail;
 use codex_otel::RuntimeMetricsSummary;
 use codex_protocol::account::PlanType;
+use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::mcp::Resource;
 use codex_protocol::mcp::ResourceTemplate;
 use codex_protocol::models::WebSearchAction;
 use codex_protocol::models::local_image_label_text;
+use codex_protocol::num_format::format_with_separators;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::plan_tool::PlanItemArg;
 use codex_protocol::plan_tool::StepStatus;
@@ -56,11 +58,14 @@ use codex_protocol::plan_tool::UpdatePlanArgs;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::McpAuthStatus;
 use codex_protocol::protocol::McpInvocation;
+use codex_protocol::protocol::NetworkAccess;
+use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::request_user_input::RequestUserInputAnswer;
 use codex_protocol::request_user_input::RequestUserInputQuestion;
 use codex_protocol::user_input::TextElement;
 use codex_utils_cli::format_env_display::format_env_display;
+use codex_utils_sandbox_summary::summarize_sandbox_policy;
 use image::DynamicImage;
 use image::ImageReader;
 use ratatui::prelude::*;
@@ -1060,6 +1065,7 @@ pub(crate) fn new_session_info(
         reasoning_effort,
         show_fast_status,
         config.cwd.clone(),
+        SessionHeaderDetails::from_config(config),
         CODEX_CLI_VERSION,
     );
     let mut parts: Vec<Box<dyn HistoryCell>> = vec![Box::new(header)];
@@ -1140,6 +1146,49 @@ pub(crate) fn new_user_prompt(
 }
 
 #[derive(Debug)]
+pub(crate) struct SessionHeaderDetails {
+    sandbox: String,
+    network: String,
+    approval: String,
+    summary: String,
+    project_doc_max_bytes: usize,
+    model_auto_compact_token_limit: Option<i64>,
+}
+
+impl SessionHeaderDetails {
+    pub(crate) fn from_config(config: &Config) -> Self {
+        Self {
+            sandbox: summarize_sandbox_policy(config.permissions.sandbox_policy.get()),
+            network: Self::network_label(config.permissions.sandbox_policy.get()).to_string(),
+            approval: config.permissions.approval_policy.value().to_string(),
+            summary: config
+                .model_reasoning_summary
+                .unwrap_or(ReasoningSummaryConfig::Auto)
+                .to_string(),
+            project_doc_max_bytes: config.project_doc_max_bytes,
+            model_auto_compact_token_limit: config.model_auto_compact_token_limit,
+        }
+    }
+
+    fn network_label(sandbox_policy: &SandboxPolicy) -> &'static str {
+        let network_enabled = match sandbox_policy {
+            SandboxPolicy::DangerFullAccess => true,
+            SandboxPolicy::ReadOnly { network_access, .. } => *network_access,
+            SandboxPolicy::WorkspaceWrite { network_access, .. } => *network_access,
+            SandboxPolicy::ExternalSandbox { network_access } => {
+                matches!(network_access, NetworkAccess::Enabled)
+            }
+        };
+
+        if network_enabled {
+            "enabled"
+        } else {
+            "restricted"
+        }
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct SessionHeaderHistoryCell {
     version: &'static str,
     model: String,
@@ -1147,6 +1196,7 @@ pub(crate) struct SessionHeaderHistoryCell {
     reasoning_effort: Option<ReasoningEffortConfig>,
     show_fast_status: bool,
     directory: PathBuf,
+    details: SessionHeaderDetails,
 }
 
 impl SessionHeaderHistoryCell {
@@ -1155,6 +1205,7 @@ impl SessionHeaderHistoryCell {
         reasoning_effort: Option<ReasoningEffortConfig>,
         show_fast_status: bool,
         directory: PathBuf,
+        details: SessionHeaderDetails,
         version: &'static str,
     ) -> Self {
         Self::new_with_style(
@@ -1163,6 +1214,7 @@ impl SessionHeaderHistoryCell {
             reasoning_effort,
             show_fast_status,
             directory,
+            details,
             version,
         )
     }
@@ -1173,6 +1225,7 @@ impl SessionHeaderHistoryCell {
         reasoning_effort: Option<ReasoningEffortConfig>,
         show_fast_status: bool,
         directory: PathBuf,
+        details: SessionHeaderDetails,
         version: &'static str,
     ) -> Self {
         Self {
@@ -1182,6 +1235,7 @@ impl SessionHeaderHistoryCell {
             reasoning_effort,
             show_fast_status,
             directory,
+            details,
         }
     }
 
@@ -1222,6 +1276,24 @@ impl SessionHeaderHistoryCell {
             ReasoningEffortConfig::None => "none",
         })
     }
+
+    fn format_project_doc_max_bytes(bytes: usize) -> String {
+        let kib = (bytes as f64) / 1024.0;
+        let rounded_kib = kib.round();
+        if (kib - rounded_kib).abs() < 0.05 {
+            format!("{bytes} ({} KB)", rounded_kib as usize)
+        } else {
+            format!("{bytes} ({kib:.1} KB)")
+        }
+    }
+
+    fn format_model_auto_compact_token_limit(limit: Option<i64>) -> String {
+        match limit {
+            None => "<default>".to_string(),
+            Some(limit) if limit <= 0 => "<disabled>".to_string(),
+            Some(limit) => format_with_separators(limit),
+        }
+    }
 }
 
 impl HistoryCell for SessionHeaderHistoryCell {
@@ -1243,19 +1315,37 @@ impl HistoryCell for SessionHeaderHistoryCell {
         const CHANGE_MODEL_HINT_COMMAND: &str = "/model";
         const CHANGE_MODEL_HINT_EXPLANATION: &str = " to change";
         const DIR_LABEL: &str = "directory:";
-        let label_width = DIR_LABEL.len();
+        const SANDBOX_LABEL: &str = "sandbox:";
+        const NETWORK_LABEL: &str = "network:";
+        const APPROVAL_LABEL: &str = "approval:";
+        const SUMMARY_LABEL: &str = "summary:";
+        const PROJECT_DOC_MAX_BYTES_LABEL: &str = "project_doc_max_bytes:";
+        const MODEL_AUTO_COMPACT_TOKEN_LIMIT_LABEL: &str = "model_auto_compact_token_limit:";
+        let label_width = [
+            "model:",
+            DIR_LABEL,
+            SANDBOX_LABEL,
+            NETWORK_LABEL,
+            APPROVAL_LABEL,
+            SUMMARY_LABEL,
+            PROJECT_DOC_MAX_BYTES_LABEL,
+            MODEL_AUTO_COMPACT_TOKEN_LIMIT_LABEL,
+        ]
+        .into_iter()
+        .map(str::len)
+        .max()
+        .unwrap_or(0);
 
-        let model_label = format!(
-            "{model_label:<label_width$}",
-            model_label = "model:",
-            label_width = label_width
-        );
+        let make_labeled_row = |label: &str, mut value_spans: Vec<Span<'static>>| {
+            let padded_label = format!("{label:<label_width$} ", label_width = label_width);
+            let mut spans = vec![Span::from(padded_label).dim()];
+            spans.append(&mut value_spans);
+            make_row(spans)
+        };
+
         let reasoning_label = self.reasoning_label();
         let model_spans: Vec<Span<'static>> = {
-            let mut spans = vec![
-                Span::from(format!("{model_label} ")).dim(),
-                Span::styled(self.model.clone(), self.model_style),
-            ];
+            let mut spans = vec![Span::styled(self.model.clone(), self.model_style)];
             if let Some(reasoning) = reasoning_label {
                 spans.push(Span::from(" "));
                 spans.push(Span::from(reasoning));
@@ -1270,18 +1360,34 @@ impl HistoryCell for SessionHeaderHistoryCell {
             spans
         };
 
-        let dir_label = format!("{DIR_LABEL:<label_width$}");
-        let dir_prefix = format!("{dir_label} ");
+        let dir_prefix = format!("{DIR_LABEL:<label_width$} ", label_width = label_width);
         let dir_prefix_width = UnicodeWidthStr::width(dir_prefix.as_str());
         let dir_max_width = inner_width.saturating_sub(dir_prefix_width);
         let dir = self.format_directory(Some(dir_max_width));
-        let dir_spans = vec![Span::from(dir_prefix).dim(), Span::from(dir)];
+        let dir_spans = vec![Span::from(dir)];
 
         let lines = vec![
             make_row(title_spans),
             make_row(Vec::new()),
-            make_row(model_spans),
-            make_row(dir_spans),
+            make_labeled_row("model:", model_spans),
+            make_labeled_row(DIR_LABEL, dir_spans),
+            make_labeled_row(SANDBOX_LABEL, vec![self.details.sandbox.clone().into()]),
+            make_labeled_row(NETWORK_LABEL, vec![self.details.network.clone().into()]),
+            make_labeled_row(APPROVAL_LABEL, vec![self.details.approval.clone().into()]),
+            make_labeled_row(SUMMARY_LABEL, vec![self.details.summary.clone().into()]),
+            make_labeled_row(
+                PROJECT_DOC_MAX_BYTES_LABEL,
+                vec![Self::format_project_doc_max_bytes(self.details.project_doc_max_bytes).into()],
+            ),
+            make_labeled_row(
+                MODEL_AUTO_COMPACT_TOKEN_LIMIT_LABEL,
+                vec![
+                    Self::format_model_auto_compact_token_limit(
+                        self.details.model_auto_compact_token_limit,
+                    )
+                    .into(),
+                ],
+            ),
         ];
 
         with_border(lines)
@@ -2651,6 +2757,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_header_snapshot_with_custom_fields() {
+        let mut config = test_config().await;
+        config.cwd = PathBuf::from("/tmp/project");
+        config.show_tooltips = false;
+        config
+            .permissions
+            .approval_policy
+            .set(AskForApproval::Never)
+            .expect("approval policy should be configurable in tests");
+        config
+            .permissions
+            .sandbox_policy
+            .set(SandboxPolicy::DangerFullAccess)
+            .expect("sandbox policy should be configurable in tests");
+        config.project_doc_max_bytes = 102400;
+        config.model_auto_compact_token_limit = Some(0);
+
+        let cell = new_session_info(
+            &config,
+            "gpt-5",
+            session_configured_event("gpt-5"),
+            false,
+            None,
+            None,
+            false,
+        );
+
+        let rendered = render_transcript(&cell).join("\n");
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[tokio::test]
     async fn session_info_first_event_suppresses_tooltips_and_nux() {
         let config = test_config().await;
         let cell = new_session_info(
@@ -3314,6 +3452,7 @@ mod tests {
             Some(ReasoningEffortConfig::High),
             true,
             std::env::temp_dir(),
+            test_session_header_details(),
             "test",
         );
 
@@ -3334,6 +3473,7 @@ mod tests {
             Some(ReasoningEffortConfig::High),
             false,
             std::env::temp_dir(),
+            test_session_header_details(),
             "test",
         );
 
@@ -3369,6 +3509,39 @@ mod tests {
         let sep = std::path::MAIN_SEPARATOR;
         let expected = format!("~{sep}…cexpialidocious");
         assert_eq!(formatted, expected);
+    }
+
+    #[test]
+    fn session_header_formats_project_doc_limit_with_decimal_kb() {
+        let formatted = SessionHeaderHistoryCell::format_project_doc_max_bytes(33000);
+        assert_eq!(formatted, "33000 (32.2 KB)");
+    }
+
+    #[test]
+    fn session_header_formats_auto_compact_limit_variants() {
+        assert_eq!(
+            SessionHeaderHistoryCell::format_model_auto_compact_token_limit(None),
+            "<default>"
+        );
+        assert_eq!(
+            SessionHeaderHistoryCell::format_model_auto_compact_token_limit(Some(0)),
+            "<disabled>"
+        );
+        assert_eq!(
+            SessionHeaderHistoryCell::format_model_auto_compact_token_limit(Some(200000)),
+            "200,000"
+        );
+    }
+
+    fn test_session_header_details() -> SessionHeaderDetails {
+        SessionHeaderDetails {
+            sandbox: "danger-full-access".to_string(),
+            network: "enabled".to_string(),
+            approval: "never".to_string(),
+            summary: "auto".to_string(),
+            project_doc_max_bytes: 102400,
+            model_auto_compact_token_limit: Some(0),
+        }
     }
 
     #[test]
